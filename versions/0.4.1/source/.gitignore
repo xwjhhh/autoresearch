@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+release-staging/
+release-hotfix-staging/
+.integration-staging/
+versions/.build/
+data/
+*.log
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.sqlite
+*.db
+api-key.bin
