@@ -1,10 +1,10 @@
 # AutoResearch Desktop
 
-AutoResearch Desktop 是一个本地优先的研究工作区，用于管理课题、导入和分析论文、开展研究讨论、整理和筛选研究 Idea，以及在独立工作目录中复现实验。当前版本为 **0.3.1**。
+AutoResearch Desktop 是一个本地优先的研究工作区，用于管理课题、导入和分析论文、开展研究讨论、整理和筛选研究 Idea，以及在独立工作目录中复现实验。当前版本为 **0.7.1**。
 
-## 0.3.1 更新
+## 0.7.1 更新
 
-0.3.1 集成了 00–03 修复包：长时间操作使用独立任务键，论文分析、研究讨论、导入和 Idea 保存可以分别维护状态；论文 Codex Agent 与实验复现 Agent 共用结构化提问协议，Agent 需要研究者决定时会暂停并在回答后继续当前会话。
+0.7.1 增加模型服务商管理，可配置 OpenAI、DeepSeek 和兼容服务，并分别切换分析/讨论模型与 Agent 模型；Agent 可使用应用内配置的 Responses 服务商。实验工作流增加方案设计、预算执行、结论归档和代码差异查看。Windows 安装包不再附带 Codex CLI。
 
 本次更新只修改源码和版本元数据，不迁移、清空或重建研究数据。当前课题的数据目录仍由工作区设置决定；实验会话记录继续保存在课题目录下的 `Experiments/PaperReproductions/exp_NNN/experiment.json`、`events.jsonl`、`workspace/REPRO.md` 和对应工作区文件中。
 
