@@ -83,6 +83,7 @@ export async function archiveVersion({ root = projectRoot, replaceExisting = fal
     await move(stagingDirectory, join(temporaryDirectory, "windows"));
     const archivedAt = new Date().toISOString();
     let previousBuild;
+    let previousArchiveDirectory;
     if (await exists(archiveDirectory)) {
       // Carry shared packages and flat history forward without copying old builds.
       for (const folder of ["history", "packages"]) {
@@ -90,12 +91,14 @@ export async function archiveVersion({ root = projectRoot, replaceExisting = fal
       }
       await mkdir(join(temporaryDirectory, "history"), { recursive: true });
       previousBuild = `history/${archivedAt.replace(/[:.]/g, "-")}-previous`;
-      await move(archiveDirectory, join(temporaryDirectory, previousBuild));
+      previousArchiveDirectory = join(buildDirectory, `previous-${version}-${archivedAt.replace(/[:.]/g, "-")}`);
+      await move(archiveDirectory, previousArchiveDirectory);
     }
     const metadata = { version, archivedAt, sourceAvailable: true, source: "source/", windowsApplication: "windows/", installer: { ...verification, path: `windows/${verification.filename}` }, ...(previousBuild ? { previousBuild } : {}) };
     await writeFile(join(temporaryDirectory, "version.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
     await writeFile(join(temporaryDirectory, "windows", "verification.json"), `${JSON.stringify({ version, installer: join(archiveDirectory, "windows", verification.filename), ...verification }, null, 2)}\n`, "utf8");
-    await rename(temporaryDirectory, archiveDirectory);
+    await move(temporaryDirectory, archiveDirectory);
+    if (previousArchiveDirectory) await move(previousArchiveDirectory, join(archiveDirectory, previousBuild));
     committed = true;
     const latest = { version, archivedAt, directory: `${version}/`, installer: `${version}/windows/${verification.filename}`, sha256: verification.sha256 };
     const latestTemporary = join(buildDirectory, "latest.json.tmp");

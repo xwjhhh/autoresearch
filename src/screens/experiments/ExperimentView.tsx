@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ChevronRight, CircleAlert, FileText, Folder, FolderOpen, LoaderCircle, Pencil, Play, Plus, RefreshCw, Send, Sparkles, Square, Terminal } from "lucide-react";
-import type { DesktopBridge, Experiment, ExperimentEvent, ExperimentFileNode, ExperimentJob, ExperimentJobStatus, ExperimentSettings, ExperimentSnapshot, ExperimentSummary, ExperimentUpdate, Paper, Project } from "../../types";
+import { ChevronRight, CircleAlert, FileText, Folder, FolderOpen, Lightbulb, LoaderCircle, Pencil, Play, Plus, RefreshCw, Send, Sparkles, Square, Terminal } from "lucide-react";
+import type { DesktopBridge, Experiment, ExperimentConversation, ExperimentEvent, Idea, IdeaStatus, ExperimentFileNode, ExperimentJob, ExperimentJobStatus, ExperimentSettings, ExperimentSnapshot, ExperimentSummary, ExperimentUpdate, Paper, Project } from "../../types";
 import { Modal } from "../../components/Shared";
 import { Markdown } from "../../components/markdown.jsx";
 import { AgentQuestionDialog } from "../../components/AgentQuestionDialog";
 import { TerminalDock, type TerminalTab } from "./TerminalDock";
+import { ExperimentSidebar, verdictLabels, type ExperimentSelection } from "./ExperimentSidebar";
+import { DesignedExperimentModal, IdeaDetail, IdeaEditorModal, type DesignedExperimentInput } from "./IdeaWorkbench";
+import { DiffTab } from "./DiffTab";
 import "./screen.css";
 
-type PanelTab = "record" | "jobs" | "files";
+type PanelTab = "record" | "diff" | "jobs" | "files";
+
+const isDesignedExperiment = (experiment: Pick<Experiment, "kind">) => experiment.kind === "designed";
+const recordFileOf = (experiment: Pick<Experiment, "kind">) => isDesignedExperiment(experiment) ? "EXPERIMENT.md" : "REPRO.md";
 type JobAction = "approve" | "reject" | "stop";
 type Tone = "blue" | "amber" | "red" | "gray" | "green";
 
@@ -28,6 +34,7 @@ export function applyExperimentUpdate(current: ExperimentSnapshot, update: Exper
   }
   if (typeof update.record === "string") next = { ...next, record: update.record };
   if (update.live !== undefined) next = { ...next, live: update.live };
+  if (update.liveConversationId !== undefined) next = { ...next, liveConversationId: update.liveConversationId };
   return next;
 }
 
@@ -91,17 +98,31 @@ export interface ExperimentIntent {
   experimentId?: string;
   paperId?: string;
   goal?: string;
+  /** 打开一个设想 */
+  ideaId?: string;
 }
 
-export function ExperimentView({ project, api = window.autoresearch, intent = null }: { project: Project; api?: DesktopBridge; intent?: ExperimentIntent | null }) {
+export function ExperimentView({ project, api = window.autoresearch, intent = null, onIdeasChange }: {
+  project: Project;
+  api?: DesktopBridge;
+  intent?: ExperimentIntent | null;
+  /** 设想（Idea）在这里新建、修改后通知 App 更新课题数据 */
+  onIdeasChange?: (ideas: Idea[]) => void;
+}) {
   const [summaries, setSummaries] = useState<ExperimentSummary[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<ExperimentSnapshot | null>(null);
+  const [activeConversationByExperiment, setActiveConversationByExperiment] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [creating, setCreating] = useState(false);
   const [newDefaults, setNewDefaults] = useState<{ paperId?: string; goal?: string } | null>(null);
+  // 设想（原 Idea 池）：在左侧列表里，选中时主区域显示设想详情。
+  const [ideas, setIdeas] = useState<Idea[]>(project.ideas ?? []);
+  const [selectedIdeaId, setSelectedIdeaId] = useState<string | null>(intent?.ideaId ?? null);
+  const [ideaEditor, setIdeaEditor] = useState<Partial<Idea> | null>(null);
+  const [designFor, setDesignFor] = useState<Idea | null>(null);
   const intentRef = useRef<ExperimentIntent | null>(intent);
   const [tab, setTab] = useState<PanelTab>("record");
   const [focusedJob, setFocusedJob] = useState<string | null>(null);
@@ -129,10 +150,17 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
     return () => { alive = false; };
   }, [api, project.id]);
 
+  useEffect(() => { setIdeas(project.ideas ?? []); }, [project.ideas]);
+
   useEffect(() => {
     if (!intent) return;
     intentRef.current = intent;
-    if (intent.experimentId) setCurrentId(intent.experimentId);
+    if (intent.ideaId) setSelectedIdeaId(intent.ideaId);
+    if (intent.experimentId) {
+      if (intent.experimentId !== currentRef.current) setSnapshot(null);
+      setCurrentId(intent.experimentId);
+      setSelectedIdeaId(null);
+    }
     if (intent.paperId || intent.goal) {
       setNewDefaults({ paperId: intent.paperId, goal: intent.goal });
       setCreating(true);
@@ -151,6 +179,12 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
         const buffered = pendingUpdates.current.filter((update) => update.experimentId === next.experiment.id);
         pendingUpdates.current = [];
         setSnapshot(buffered.reduce(applyExperimentUpdate, next));
+        setActiveConversationByExperiment((current) => {
+          const selected = current[next.experiment.id];
+          if (selected && next.experiment.conversations.some((item) => item.id === selected)) return current;
+          const first = next.experiment.conversations[0]?.id;
+          return first ? { ...current, [next.experiment.id]: first } : current;
+        });
       })
       .catch((reason) => { if (alive) setError(cleanError(reason)); });
     return () => { alive = false; };
@@ -189,6 +223,8 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
   }
 
   const experiment = snapshot?.experiment ?? null;
+  const activeConversationId = currentId ? activeConversationByExperiment[currentId] ?? null : null;
+  const activeConversation = experiment?.conversations.find((item) => item.id === activeConversationId) ?? experiment?.conversations[0] ?? null;
   const update = (experimentId: string, patch: Partial<ExperimentSnapshot>) => setSnapshot((current) => current?.experiment.id === experimentId ? { ...current, ...patch } : current);
 
   const create = async (input: { paperId: string; goal: string; code: string; settings: ExperimentSettings }) => {
@@ -198,29 +234,100 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
       id: created.experiment.id, title: created.experiment.title, paperId: created.experiment.paperId, paperTitle: created.experiment.paperTitle,
       agent: created.experiment.agent, activity: created.experiment.activity, error: null, pendingJobs: 0, runningJobs: 0, updatedAt: created.experiment.updatedAt,
     }, ...list.filter((item) => item.id !== created.experiment.id)]);
+    setSelectedIdeaId(null);
+    setSnapshot(null);
+    const firstConversationId = created.experiment.conversations[0]?.id;
+    if (firstConversationId) setActiveConversationByExperiment((current) => ({ ...current, [created.experiment.id]: firstConversationId }));
     setCurrentId(created.experiment.id);
     setTab("record");
     setCreating(false);
     return true;
   };
 
+  const changeIdeas = (next: Idea[]) => {
+    setIdeas(next);
+    onIdeasChange?.(next);
+  };
+  const mergeIdea = (saved: Idea) => {
+    const next = ideas.some((item) => item.id === saved.id) ? ideas.map((item) => item.id === saved.id ? saved : item) : [saved, ...ideas];
+    changeIdeas(next);
+  };
+  const select = (selection: ExperimentSelection) => {
+    if (!selection) return;
+    setFocusedJob(null);
+    setTerminalTab(null);
+    if (selection.type === "idea") setSelectedIdeaId(selection.id);
+    else {
+      setSelectedIdeaId(null);
+      if (selection.id !== currentId) setSnapshot(null);
+      setCurrentId(selection.id);
+    }
+  };
+  const saveIdea = async (idea: Partial<Idea>) => {
+    const saved = await act("idea", () => api.saveIdea({ projectId: project.id, idea }));
+    if (!saved) return false;
+    mergeIdea(saved);
+    setIdeaEditor(null);
+    setSelectedIdeaId(saved.id);
+    return true;
+  };
+  const setIdeaStatus = async (idea: Idea, status: IdeaStatus, reason?: string) => {
+    const saved = await act("idea", () => api.updateIdea({ projectId: project.id, ideaId: idea.id, status, reason }));
+    if (saved) mergeIdea(saved);
+    return Boolean(saved);
+  };
+  const createDesigned = async (input: DesignedExperimentInput) => {
+    const created = await act("create-designed", () => api.createExperiment(project.id, input));
+    if (!created) return false;
+    const { experiment: next } = created;
+    setSummaries((list) => [{
+      id: next.id, title: next.title, type: "designed", kind: "设计实验", ideaId: next.ideaId, ideaTitle: next.ideaTitle, baselineId: next.baselineId, outcome: null,
+      paperId: next.paperId, paperTitle: next.paperTitle, agent: next.agent, activity: next.activity, error: null, pendingJobs: 0, runningJobs: 0, updatedAt: next.updatedAt,
+    }, ...list.filter((item) => item.id !== next.id)]);
+    const idea = ideas.find((item) => item.id === input.ideaId);
+    if (idea) mergeIdea({ ...idea, status: "continue", experimentIds: [...new Set([...(idea.experimentIds ?? []), next.id])], updatedAt: next.updatedAt });
+    setDesignFor(null);
+    setSelectedIdeaId(null);
+    setSnapshot(null);
+    const firstConversationId = next.conversations[0]?.id;
+    if (firstConversationId) setActiveConversationByExperiment((current) => ({ ...current, [next.id]: firstConversationId }));
+    setCurrentId(next.id);
+    setTab("record");
+    return true;
+  };
+
+  const createConversation = async () => {
+    if (!experiment) return;
+    const created = await act("conversation-create", () => api.createExperimentConversation(project.id, experiment.id));
+    if (!created) return;
+    setSnapshot((current) => {
+      if (current?.experiment.id !== experiment.id) return current;
+      const conversations = current.experiment.conversations.some((item) => item.id === created.id)
+        ? current.experiment.conversations
+        : [...current.experiment.conversations, created];
+      return { ...current, experiment: { ...current.experiment, conversations } };
+    });
+    setActiveConversationByExperiment((current) => ({ ...current, [experiment.id]: created.id }));
+  };
+
   const send = async (text: string) => {
-    if (!experiment) return false;
-    const next = await act("send", () => api.sendExperimentMessage(project.id, experiment.id, text));
+    if (!experiment || !activeConversation) return false;
+    const next = await act("send", () => api.sendExperimentMessage(project.id, experiment.id, activeConversation.id, text));
     if (next) update(experiment.id, { experiment: next });
     return Boolean(next);
   };
 
   const answerQuestion = async (requestId: string, answers: Record<string, string>) => {
-    if (!experiment) return false;
-    const next = await act("answer-question", () => api.answerExperimentQuestion(project.id, experiment.id, requestId, answers));
+    if (!experiment || !activeConversation) return false;
+    const next = await act("answer-question", () => api.answerExperimentQuestion(project.id, experiment.id, activeConversation.id, requestId, answers));
     if (next) update(experiment.id, { experiment: next });
     return Boolean(next);
   };
 
   const stopQuestion = async () => {
     if (!experiment) return;
-    const next = await act("stop-question", () => api.stopExperiment(project.id, experiment.id));
+    if (!activeConversation) return;
+    const next = await act("stop-question", () => api.stopExperiment(project.id, experiment.id, activeConversation.id));
     if (next) update(experiment.id, { experiment: next });
   };
 
@@ -242,43 +349,84 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
   const jobs = snapshot?.jobs ?? [];
   const pending = jobs.filter((job) => job.status === "pending").length;
   const running = jobs.filter((job) => job.status === "running").length;
+  const conversationPending = jobs.filter((job) => job.status === "pending" && job.conversationId === activeConversation?.id).length;
+  const conversationRunning = jobs.filter((job) => job.status === "running" && job.conversationId === activeConversation?.id).length;
 
-  return <div className={`exp-view ${snapshot ? "" : "is-empty"}`}>
+  const selectedIdea = selectedIdeaId ? ideas.find((idea) => idea.id === selectedIdeaId) ?? null : null;
+  const showExperiment = !selectedIdea && snapshot;
+  const showExperimentPanel = !selectedIdea && Boolean(currentId);
+  const designed = experiment ? isDesignedExperiment(experiment) : false;
+  const budget = experiment?.settings.budget;
+  const usage = budgetUsage(jobs);
+  const verdict = experiment?.outcome ? verdictLabels[experiment.outcome.verdict] : null;
+  const ideaOfExperiment = experiment?.ideaId ? ideas.find((idea) => idea.id === experiment.ideaId) : undefined;
+  const nothingYet = !ordered.length && !ideas.length;
+
+  return <div className={`exp-view ${showExperimentPanel ? "" : "is-empty"}`}>
+    <ExperimentSidebar
+      summaries={summaries}
+      ideas={ideas}
+      selection={selectedIdea ? { type: "idea", id: selectedIdea.id } : currentId ? { type: "experiment", id: currentId } : null}
+      onSelect={select}
+      onNewReproduction={() => { setNewDefaults(null); setCreating(true); }}
+      onNewIdea={() => setIdeaEditor({ status: "candidate" })}
+    />
     <section className="exp-main">
-      {ordered.length > 0 && <header className="exp-header">
-        <label className="exp-picker">
-          <span>实验</span>
-          <select value={currentId ?? ""} onChange={(event) => { setCurrentId(event.target.value); setFocusedJob(null); setTerminalTab(null); }}>
-            {ordered.map((item) => <option key={item.id} value={item.id}>{item.title}（{item.id}）</option>)}
-          </select>
-        </label>
-        {experiment && <span className="exp-paper" title={experiment.paperTitle}>论文 <strong>{experiment.paperId}</strong></span>}
-        {experiment && <Pill {...experimentStatus(experiment, pending, running)} />}
+      {showExperiment && experiment && <header className="exp-header">
+        <div className="exp-heading">
+          <strong title={experiment.title}>{experiment.title}</strong>
+          <span className={`exp-kind ${designed ? "is-designed" : ""}`}>{designed ? "设计实验" : "论文复现"}</span>
+        </div>
+        {designed
+          ? <>
+            {experiment.ideaId && <button type="button" className="exp-link exp-header-link" title={experiment.ideaTitle ?? ""} onClick={() => ideaOfExperiment && select({ type: "idea", id: ideaOfExperiment.id })} disabled={!ideaOfExperiment}><Lightbulb size={12} />{experiment.ideaTitle ?? experiment.ideaId}</button>}
+            {experiment.baselineId ? <button type="button" className="exp-link exp-header-link" onClick={() => select({ type: "experiment", id: experiment.baselineId! })}>基线 {experiment.baselineId}</button> : <span className="exp-paper">无基线</span>}
+          </>
+          : <span className="exp-paper" title={experiment.paperTitle}>论文 <strong>{experiment.paperId}</strong></span>}
+        <Pill {...experimentStatus(experiment, pending, running)} />
+        {verdict && <span className={`exp-pill exp-pill--${verdict.tone}`} title={experiment.outcome?.summary}>{verdict.label}</span>}
+        {designed && budget && (budget.maxJobs || budget.maxHours) && <span className="exp-budget-usage" title="手动运行的命令不计入预算">
+          预算 {budget.maxJobs ? `${usage.jobs}/${budget.maxJobs} 个任务` : ""}{budget.maxJobs && budget.maxHours ? " · " : ""}{budget.maxHours ? `${usage.hours.toFixed(1)}/${budget.maxHours} 小时` : ""}
+        </span>}
         <span className="exp-header-spacer" />
-        {experiment && <>
-          <label className="exp-toggle" title="agent 的沙箱能否联网。后台任务不受这个开关限制。">
-            <input type="checkbox" checked={experiment.settings.network} disabled={busy === "settings"} onChange={(event) => void act("settings", () => api.updateExperimentSettings(project.id, experiment.id, { network: event.target.checked }))} />
-            允许联网
-          </label>
-          <label className="exp-toggle" title="后台任务在沙箱外运行。打开时，每个后台任务都要你点“开始运行”。">
-            <input type="checkbox" checked={experiment.settings.approveJobs} disabled={busy === "settings"} onChange={(event) => void act("settings", () => api.updateExperimentSettings(project.id, experiment.id, { approveJobs: event.target.checked }))} />
-            长任务需确认
-          </label>
-        </>}
-        <button className="button button--primary" onClick={() => { setNewDefaults(null); setCreating(true); }}><Plus size={14} />新建实验</button>
+        <label className="exp-toggle" title="agent 的沙箱能否联网。后台任务不受这个开关限制。">
+          <input type="checkbox" checked={experiment.settings.network} disabled={busy === "settings"} onChange={(event) => void act("settings", () => api.updateExperimentSettings(project.id, experiment.id, { network: event.target.checked }))} />
+          允许联网
+        </label>
+        <label className="exp-toggle" title="后台任务在沙箱外运行。打开时，每个后台任务都要你点“开始运行”。">
+          <input type="checkbox" checked={experiment.settings.approveJobs} disabled={busy === "settings"} onChange={(event) => void act("settings", () => api.updateExperimentSettings(project.id, experiment.id, { approveJobs: event.target.checked }))} />
+          长任务需确认
+        </label>
+        {!designed && <button type="button" className="button button--small" onClick={() => setIdeaEditor({ status: "candidate", baselineId: experiment.id, paperIds: [experiment.paperId] })}><Lightbulb size={13} />基于此提出设想</button>}
       </header>}
 
-      {error && !creating && <div className="exp-banner" role="alert"><CircleAlert size={14} /><span>{error}</span><button type="button" onClick={() => setError("")}>知道了</button></div>}
+      {error && !creating && !ideaEditor && !designFor && <div className="exp-banner" role="alert"><CircleAlert size={14} /><span>{error}</span><button type="button" onClick={() => setError("")}>知道了</button></div>}
 
-      {!ordered.length ? <ExperimentEmpty papers={parsedPapers.length} onCreate={() => setCreating(true)} />
+      {selectedIdea ? <IdeaDetail
+          key={selectedIdea.id}
+          idea={selectedIdea}
+          summaries={summaries}
+          papers={project.papers}
+          busy={busy === "idea"}
+          onEdit={() => setIdeaEditor(selectedIdea)}
+          onStatus={(status, reason) => setIdeaStatus(selectedIdea, status, reason)}
+          onStart={() => setDesignFor(selectedIdea)}
+          onOpenExperiment={(experimentId) => select({ type: "experiment", id: experimentId })}
+        />
+        : nothingYet ? <ExperimentEmpty papers={parsedPapers.length} onCreate={() => setCreating(true)} onNewIdea={() => setIdeaEditor({ status: "candidate" })} />
+        : !currentId ? <div className="exp-loading">从左侧选一个设想或实验。</div>
         : !snapshot ? <div className="exp-loading"><LoaderCircle className="spin" size={16} />正在打开实验</div>
         : <>
-          <Conversation snapshot={snapshot} busyKey={busy} onJobAction={jobAction} onFocusJob={focusJob} />
-          <Composer key={snapshot.experiment.id} experiment={snapshot.experiment} pending={pending} running={running} busy={busy === "send" || busy === "stop"} onSend={send} onStop={() => void act("stop", () => api.stopExperiment(project.id, snapshot.experiment.id))} />
+          <ConversationTabs conversations={experiment?.conversations ?? []} activeId={activeConversation?.id ?? ""} onSelect={(conversationId) => {
+            if (currentId) setActiveConversationByExperiment((current) => ({ ...current, [currentId]: conversationId }));
+            setTerminalTab("agent");
+          }} onCreate={createConversation} busy={busy === "conversation-create"} />
+          {activeConversation && <Conversation key={`conversation:${activeConversation.id}`} snapshot={snapshot} conversation={activeConversation} busyKey={busy} onJobAction={jobAction} onFocusJob={focusJob} />}
+          {activeConversation && <Composer key={`composer:${activeConversation.id}`} conversation={activeConversation} pending={conversationPending} running={conversationRunning} busy={busy === "send" || busy === "stop"} onSend={send} onStop={() => void act("stop", () => api.stopExperiment(project.id, snapshot.experiment.id, activeConversation.id))} />}
         </>}
     </section>
 
-    {snapshot && <ExperimentPanel
+    {showExperimentPanel && (snapshot ? <ExperimentPanel
       key={snapshot.experiment.id}
       api={api}
       projectId={project.id}
@@ -292,13 +440,14 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
       onSaveRecord={async (text) => { const saved = await act("record", () => api.saveExperimentRecord(project.id, snapshot.experiment.id, text)); if (saved !== null) update(snapshot.experiment.id, { record: saved }); return saved !== null; }}
       onShowJob={focusJob}
       onError={setError}
-    />}
+    /> : <aside className="exp-panel exp-panel-loading"><LoaderCircle className="spin" size={15} /><span>正在加载实验侧栏</span></aside>)}
 
-    {snapshot && <TerminalDock
-      key={`terminal-${snapshot.experiment.id}`}
+    {showExperiment && snapshot && <TerminalDock
+      key={`terminal-${snapshot.experiment.id}-${activeConversation?.id ?? "main"}`}
       api={api}
       projectId={project.id}
       snapshot={snapshot}
+      conversationId={activeConversation?.id}
       open={terminalOpen}
       onOpenChange={setTerminalOpen}
       active={terminalTab}
@@ -308,25 +457,34 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
       onError={setError}
     />}
 
+    {ideaEditor && <IdeaEditorModal idea={ideaEditor} summaries={summaries} papers={project.papers} busy={busy === "idea"} error={busy ? "" : error} onClose={() => setIdeaEditor(null)} onSave={saveIdea} />}
+    {designFor && <DesignedExperimentModal idea={designFor} summaries={summaries} papers={project.papers} busy={busy === "create-designed"} error={busy ? "" : error} onClose={() => setDesignFor(null)} onCreate={createDesigned} />}
     {creating && <NewExperimentModal papers={parsedPapers} initialPaperId={newDefaults?.paperId} initialGoal={newDefaults?.goal} busy={busy === "create"} error={busy ? "" : error} onClose={() => { setCreating(false); setNewDefaults(null); }} onCreate={create} />}
-    {snapshot?.experiment.pendingQuestion && <AgentQuestionDialog
-      key={snapshot.experiment.pendingQuestion.requestId}
-      question={snapshot.experiment.pendingQuestion}
+    {activeConversation?.pendingQuestion && <AgentQuestionDialog
+      key={`${activeConversation.id}:${activeConversation.pendingQuestion.requestId}`}
+      question={activeConversation.pendingQuestion}
       busy={busy === "answer-question" || busy === "stop-question"}
-      onSubmit={(answers) => answerQuestion(snapshot.experiment.pendingQuestion!.requestId, answers)}
+      onSubmit={(answers) => answerQuestion(activeConversation.pendingQuestion!.requestId, answers)}
       onStop={stopQuestion}
     />}
   </div>;
 }
 
-function ExperimentEmpty({ papers, onCreate }: { papers: number; onCreate: () => void }) {
+function ExperimentEmpty({ papers, onCreate, onNewIdea }: { papers: number; onCreate: () => void; onNewIdea: () => void }) {
   return <div className="exp-empty">
     <span className="exp-empty-icon"><Terminal size={20} /></span>
     <h2>还没有实验</h2>
-    <p>选一篇已解析的论文，用一句话说明要复现什么。agent 会先读论文，给你计划，再动手配环境、跑代码。</p>
-    {papers ? <button className="button button--primary" onClick={onCreate}><Plus size={15} />新建实验</button>
+    <p>先复现一篇论文：agent 会读论文、配环境、跑代码。复现跑通后，可以在它的基础上提出设想，让 agent 自己改代码、运行并记录结果。</p>
+    {papers ? <div className="exp-empty-actions"><button className="button button--primary" onClick={onCreate}><Plus size={15} />复现一篇论文</button><button className="button" onClick={onNewIdea}><Lightbulb size={15} />记录一个设想</button></div>
       : <p className="exp-empty-hint">先在“文献分析”里导入论文，解析完成后就能新建实验。</p>}
   </div>;
+}
+
+/** 预算用量：手动运行的命令不计入。 */
+function budgetUsage(jobs: ExperimentJob[]) {
+  const counted = jobs.filter((job) => job.origin !== "user" && job.startedAt);
+  const hours = counted.reduce((sum, job) => sum + Math.max(0, (job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.startedAt!)) / 3_600_000, 0);
+  return { jobs: counted.length, hours };
 }
 
 // ---------- 对话 ----------
@@ -351,16 +509,32 @@ export function groupEvents(events: ExperimentEvent[]): Block[] {
   return blocks;
 }
 
-function Conversation({ snapshot, busyKey, onJobAction, onFocusJob }: { snapshot: ExperimentSnapshot; busyKey: string; onJobAction: (job: ExperimentJob, action: JobAction) => void; onFocusJob: (jobId: string) => void }) {
+function ConversationTabs({ conversations, activeId, onSelect, onCreate, busy }: { conversations: ExperimentConversation[]; activeId: string; onSelect: (id: string) => void; onCreate: () => void; busy: boolean }) {
+  return <nav className="exp-conversation-tabs" aria-label="实验会话">
+    <div className="exp-conversation-tab-list" role="tablist">
+      {conversations.map((conversation, index) => {
+        const label = conversation.title || (index ? `会话 ${index + 1}` : "主会话");
+        const status = conversation.pendingQuestion ? "等你作答" : conversation.agent === "working" ? "运行中" : "";
+        return <button key={conversation.id} type="button" role="tab" aria-selected={conversation.id === activeId} className={conversation.id === activeId ? "is-active" : ""} onClick={() => onSelect(conversation.id)}>
+          <span>{label}</span>{status && <small>{status}</small>}
+        </button>;
+      })}
+    </div>
+    <button type="button" className="button button--small" disabled={busy} onClick={onCreate} title="开启独立 Codex 会话">{busy ? <LoaderCircle className="spin" size={13} /> : <Plus size={13} />}新会话</button>
+  </nav>;
+}
+
+function Conversation({ snapshot, conversation, busyKey, onJobAction, onFocusJob }: { snapshot: ExperimentSnapshot; conversation: ExperimentConversation; busyKey: string; onJobAction: (job: ExperimentJob, action: JobAction) => void; onFocusJob: (jobId: string) => void }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  const blocks = useMemo(() => groupEvents(snapshot.events), [snapshot.events]);
+  const events = useMemo(() => snapshot.events.filter((event) => (event.conversationId ?? snapshot.experiment.conversations[0]?.id) === conversation.id), [snapshot.events, snapshot.experiment.conversations, conversation.id]);
+  const blocks = useMemo(() => groupEvents(events), [events]);
   const jobs = useMemo(() => new Map(snapshot.jobs.map((job) => [job.id, job])), [snapshot.jobs]);
 
   useEffect(() => {
     const element = scroller.current;
     if (element && stick.current) element.scrollTop = element.scrollHeight;
-  }, [snapshot.events.length, snapshot.experiment.activity]);
+  }, [events.length, conversation.activity]);
 
   return <div className="exp-stream" ref={scroller} onScroll={(event) => {
     const element = event.currentTarget;
@@ -368,7 +542,10 @@ function Conversation({ snapshot, busyKey, onJobAction, onFocusJob }: { snapshot
   }}>
     <div className="exp-stream-inner">
       {blocks.map((block) => {
-        if (block.kind === "activity") return <ActivityGroup key={block.id} events={block.events} />;
+        if (block.kind === "activity") {
+          const visibleEvents = block.events.filter((event) => event.type !== "job" || !event.jobId || jobs.get(event.jobId)?.conversationId === conversation.id);
+          return visibleEvents.length ? <ActivityGroup key={block.id} events={visibleEvents} /> : null;
+        }
         const { event } = block;
         if (event.type === "user") return <article key={event.id} className="exp-msg exp-msg--user">
           <header><strong>你</strong><time>{clock(event.at)}</time></header>
@@ -380,12 +557,12 @@ function Conversation({ snapshot, busyKey, onJobAction, onFocusJob }: { snapshot
         </article>;
         if (event.type === "job") {
           const job = event.jobId ? jobs.get(event.jobId) : undefined;
-          return job ? <JobCard key={event.id} job={job} busy={busyKey === `job-${job.id}`} onAction={(action) => onJobAction(job, action)} onShowLog={() => onFocusJob(job.id)} /> : null;
+          return job?.conversationId === conversation.id ? <JobCard key={event.id} job={job} busy={busyKey === `job-${job.id}`} onAction={(action) => onJobAction(job, action)} onShowLog={() => onFocusJob(job.id)} /> : null;
         }
         if (event.type === "error") return <div key={event.id} className="exp-error"><CircleAlert size={14} /><span>{event.text}</span></div>;
         return <div key={event.id} className="exp-system"><span>{clock(event.at)} · {event.text}</span></div>;
       })}
-      {snapshot.experiment.agent === "working" && <div className="exp-working"><LoaderCircle className="spin" size={13} />{snapshot.experiment.activity || "agent 正在工作"}</div>}
+      {conversation.agent === "working" && <div className="exp-working"><LoaderCircle className="spin" size={13} />{conversation.activity || "agent 正在工作"}</div>}
     </div>
   </div>;
 }
@@ -431,6 +608,11 @@ function ActivityGroup({ events }: { events: ExperimentEvent[] }) {
 }
 
 function jobMeta(job: ExperimentJob) {
+  const version = job.codeVersion ? ` · 代码 ${job.codeVersion.slice(0, 7)}` : "";
+  return jobState(job) + version;
+}
+
+function jobState(job: ExperimentJob) {
   if (job.status === "pending") return `提交于 ${clock(job.requestedAt)}`;
   if (job.status === "running") return `已运行 ${duration(job.startedAt)}`;
   if (job.status === "done" || job.status === "failed") return `退出码 ${job.exitCode ?? "未知"} · ${duration(job.startedAt, job.finishedAt)}`;
@@ -468,10 +650,10 @@ function JobCard({ job, busy, onAction, onShowLog }: { job: ExperimentJob; busy:
   </section>;
 }
 
-function Composer({ experiment, pending, running, busy, onSend, onStop }: { experiment: Experiment; pending: number; running: number; busy: boolean; onSend: (text: string) => Promise<boolean>; onStop: () => void }) {
+function Composer({ conversation, pending, running, busy, onSend, onStop }: { conversation: ExperimentConversation; pending: number; running: number; busy: boolean; onSend: (text: string) => Promise<boolean>; onStop: () => void }) {
   const [text, setText] = useState("");
-  const working = experiment.agent === "working";
-  const waitingForAnswer = Boolean(experiment.pendingQuestion);
+  const working = conversation.agent === "working";
+  const waitingForAnswer = Boolean(conversation.pendingQuestion);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const wasWorking = useRef(working);
   useEffect(() => {
@@ -494,17 +676,19 @@ function Composer({ experiment, pending, running, busy, onSend, onStop }: { expe
     : working ? "agent 正在工作，可以随时停止"
     : pending ? `有 ${pending} 个后台任务等你确认`
     : running ? `${running} 个后台任务运行中，结束后会自动唤醒 agent`
-    : experiment.error ? `上一轮出错：${experiment.error}`
+    : conversation.error ? `上一轮出错：${conversation.error}`
     : "Ctrl + Enter 发送";
   return <form className="exp-composer" onSubmit={submit}>
-    <label htmlFor="exp-message">给 agent 发消息</label>
-    <textarea ref={textarea} id="exp-message" value={text} rows={3} maxLength={8000} disabled={waitingForAnswer} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown}
-      placeholder={waitingForAnswer ? "请先回答 agent 的问题" : working ? "agent 正在工作。可以先写好，等这一轮结束再发" : "例如：消融实验只跑一个 seed 就行"} />
-    <div className="exp-composer-row">
-      <span className={`exp-composer-status ${experiment.error && !working ? "is-error" : ""}`}>{status}</span>
-      {working
-        ? <button type="button" className="button" disabled={busy} onClick={onStop}><Square size={11} />停止</button>
+    <div className="exp-composer-inner">
+      <label htmlFor="exp-message">给当前会话发消息</label>
+      <textarea ref={textarea} id="exp-message" value={text} rows={3} maxLength={8000} disabled={waitingForAnswer} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown}
+        placeholder={waitingForAnswer ? "请先回答 agent 的问题" : working ? "agent 正在工作。可以先写好，等这一轮结束再发" : "例如：消融实验只跑一个 seed 就行"} />
+      <div className="exp-composer-row">
+        <span className={`exp-composer-status ${conversation.error && !working ? "is-error" : ""}`}>{status}</span>
+        {working
+          ? <button type="button" className="button" disabled={busy} onClick={onStop}><Square size={11} />停止</button>
         : <button type="submit" className="button button--primary" disabled={!text.trim() || waitingForAnswer || busy}>{busy ? <LoaderCircle className="spin" size={13} /> : <Send size={13} />}发送</button>}
+      </div>
     </div>
   </form>;
 }
@@ -529,8 +713,10 @@ interface PanelProps {
 
 function ExperimentPanel(props: PanelProps) {
   const { snapshot, tab, onTab } = props;
+  const designed = isDesignedExperiment(snapshot.experiment);
   const tabs: Array<{ id: PanelTab; label: string }> = [
-    { id: "record", label: "复现记录" },
+    { id: "record", label: designed ? "实验记录" : "复现记录" },
+    ...(designed ? [{ id: "diff" as const, label: "改动" }] : []),
     { id: "jobs", label: snapshot.jobs.length ? `后台任务 ${snapshot.jobs.length}` : "后台任务" },
     { id: "files", label: "文件" },
   ];
@@ -540,6 +726,7 @@ function ExperimentPanel(props: PanelProps) {
     </div>
     <div className="exp-panel-body" role="tabpanel">
       {tab === "record" && <RecordTab {...props} />}
+      {tab === "diff" && designed && <DiffTab api={props.api} projectId={props.projectId} experimentId={snapshot.experiment.id} refreshKey={`${snapshot.jobs.length}:${snapshot.experiment.updatedAt}`} />}
       {tab === "jobs" && <JobsTab {...props} />}
       {tab === "files" && <FilesTab {...props} />}
     </div>
@@ -548,9 +735,10 @@ function ExperimentPanel(props: PanelProps) {
 
 function RecordTab({ api, projectId, snapshot, busyKey, onSaveRecord, onError }: PanelProps) {
   const [draft, setDraft] = useState<string | null>(null);
-  const open = () => void api.openExperimentPath(projectId, snapshot.experiment.id, "REPRO.md").catch((reason) => onError(cleanError(reason)));
+  const file = recordFileOf(snapshot.experiment);
+  const open = () => void api.openExperimentPath(projectId, snapshot.experiment.id, file).catch((reason) => onError(cleanError(reason)));
   if (draft !== null) return <div className="exp-record-edit">
-    <label htmlFor="exp-record">编辑 REPRO.md</label>
+    <label htmlFor="exp-record">编辑 {file}</label>
     <textarea id="exp-record" value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} />
     <div className="exp-panel-actions">
       <span>保存后 agent 下一轮会看到你改过。</span>
@@ -559,9 +747,9 @@ function RecordTab({ api, projectId, snapshot, busyKey, onSaveRecord, onError }:
     </div>
   </div>;
   return <div className="exp-record">
-    <div className="exp-markdown">{snapshot.record.trim() ? <Markdown source={snapshot.record} /> : <p className="exp-muted">REPRO.md 还是空的。</p>}</div>
+    <div className="exp-markdown">{snapshot.record.trim() ? <Markdown source={snapshot.record} /> : <p className="exp-muted">{file} 还是空的。</p>}</div>
     <div className="exp-panel-actions">
-      <span><code>REPRO.md</code> 由 agent 维护，你也可以直接改。</span>
+      <span><code>{file}</code> 由 agent 维护，你也可以直接改。</span>
       <button className="button" onClick={open}>用编辑器打开</button>
       <button className="button" onClick={() => setDraft(snapshot.record)}><Pencil size={12} />编辑</button>
     </div>
@@ -585,13 +773,13 @@ function JobsTab({ snapshot, focusedJob, onFocusJob, busyKey, onJobAction, onSho
           {job.note && <p className="exp-job-note">{job.note}</p>}
           {job.lastLine && <p className="exp-job-row-last">{job.lastLine}</p>}
           <div className="exp-panel-actions">
-            <span>{job.log}</span>
+            <span>{job.outputDeleted ? "日志已清理，任务记录保留。" : job.log}</span>
             {job.status === "pending" && <>
               <button className="button" disabled={busyKey === `job-${job.id}`} onClick={() => onJobAction(job, "reject")}>不运行</button>
               <button className="button button--primary" disabled={busyKey === `job-${job.id}`} onClick={() => onJobAction(job, "approve")}><Play size={12} />开始运行</button>
             </>}
             {job.status === "running" && <button className="button exp-danger" disabled={busyKey === `job-${job.id}`} onClick={() => onJobAction(job, "stop")}>停止</button>}
-            {job.status !== "pending" && job.status !== "rejected" && <button className="button" onClick={() => onShowJob(job.id)}><Terminal size={12} />在终端查看</button>}
+            {job.outputDeleted ? <small className="exp-muted">终端输出已删除</small> : job.status !== "pending" && job.status !== "rejected" && <button className="button" onClick={() => onShowJob(job.id)}><Terminal size={12} />在终端查看</button>}
           </div>
         </div>}
       </div>;

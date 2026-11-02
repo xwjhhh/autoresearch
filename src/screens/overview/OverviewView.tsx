@@ -179,7 +179,7 @@ export function OverviewView({ project, ideas, experiments, environment, tasks, 
         </button>) : <p className="ov-empty">还没有讨论。<button type="button" className="ov-link" onClick={() => onView("discussion")}>开始一个讨论</button></p>}
       </section>
       <section className="ov-card">
-        <div className="ov-card-head"><h2>候选 Idea</h2><button type="button" className="ov-link" onClick={() => onView("ideas")}>Idea 池</button></div>
+        <div className="ov-card-head"><h2>候选设想</h2><button type="button" className="ov-link" onClick={() => onView("experiments")}>去实验</button></div>
         {activeIdeas.length ? activeIdeas.map((idea) => <button type="button" className="ov-row" key={idea.id} onClick={() => onEditIdea(idea)}>
           <span className="ov-row-title"><strong>{idea.title}</strong><span className={`ov-pill ov-pill--${idea.status === "continue" ? "green" : "gray"}`}>{statusLabels[idea.status]}</span></span>
           <span className="ov-row-preview">{idea.mechanism}</span>

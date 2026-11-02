@@ -110,6 +110,122 @@ test("本地 MCP 提问工具等待结构化答案后才返回", async () => {
   }
 });
 
+test("实验会话使用独立 Codex thread，可并行运行且停止彼此隔离", async () => {
+  const gates = [];
+  const ctx = setup({ turns: [async (options) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    gates.push(release);
+    await options.onThread("thread-primary");
+    await Promise.race([gate, new Promise((resolve) => options.signal.addEventListener("abort", resolve, { once: true }))]);
+    return { finalResponse: `完成 ${options.threadId ?? "主会话"}` };
+  }, async (options) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    gates.push(release);
+    await options.onThread("thread-secondary");
+    await Promise.race([gate, new Promise((resolve) => options.signal.addEventListener("abort", resolve, { once: true }))]);
+    return { finalResponse: "次会话完成" };
+  }] });
+  const lab = await ctx.make();
+  try {
+    await lab.create(projectId, { paperId: "paper_001", goal: "并行会话测试" });
+    await waitFor(() => ctx.calls.length === 1);
+    const created = await lab.createConversation(projectId, "exp_001", "新意见");
+    await lab.send(projectId, "exp_001", "补充一个方向", created.id);
+    await waitFor(() => ctx.calls.length === 2);
+    assert.equal(ctx.calls.length, 2);
+    assert.equal(ctx.calls[1].options.threadId, null);
+    assert.equal((await lab.get(projectId, "exp_001")).experiment.conversations[0].threadId, "thread-primary");
+    assert.equal((await lab.get(projectId, "exp_001")).experiment.conversations[1].threadId, "thread-secondary");
+    await lab.stop(projectId, "exp_001", created.id);
+    assert.equal((await lab.get(projectId, "exp_001")).experiment.conversations[0].agent, "working");
+    gates[0]?.();
+    await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.conversations[0].agent === "idle");
+  } finally {
+    for (const release of gates) release();
+    await lab.stopAll();
+    await rm(ctx.root(), { recursive: true, force: true });
+  }
+});
+
+test("旧实验会自动更新运行入口，次会话任务和结果通知留在原会话", async () => {
+  const ctx = setup({ turns: [
+    async () => ({ finalResponse: "主会话完成" }),
+    async (options) => {
+      assert.match(options.conversationId, /^conv_/);
+      assert.equal(options.shellEnvironment.AUTORESEARCH_CONVERSATION_ID, options.conversationId);
+      const helper = join(options.workingDirectory, ".ar", "run.mjs");
+      assert.match(await readFile(helper, "utf8"), /AUTORESEARCH_CONVERSATION_ID/);
+      execFileSync(process.execPath, [helper, "session-job", "--", "node -e \"process.stdout.write('session job done')\""], {
+        cwd: options.workingDirectory,
+        env: { ...process.env, ...options.shellEnvironment },
+      });
+      return { finalResponse: "次会话已提交任务" };
+    },
+  ] });
+  const lab = await ctx.make();
+  try {
+    await lab.create(projectId, { paperId: "paper_001", goal: "会话隔离", settings: { approveJobs: true } });
+    await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
+    const entry = await lab.entry(projectId, "exp_001");
+    const primaryId = entry.experiment.conversations[0].id;
+    const staleHelper = join(entry.workspace, ".ar", "run.mjs");
+    await writeFile(staleHelper, "// stale helper from an earlier app version\n", "utf8");
+    const secondary = await lab.createConversation(projectId, "exp_001", "会话 2");
+    await lab.send(projectId, "exp_001", "增加一个验证方向", secondary.id);
+
+    const pending = await waitFor(async () => {
+      const snapshot = await lab.get(projectId, "exp_001");
+      return snapshot.jobs.find((job) => job.name === "session-job")?.status === "pending" ? snapshot : false;
+    });
+    const job = pending.jobs.find((item) => item.name === "session-job");
+    assert.equal(job.conversationId, secondary.id);
+    assert.ok(pending.events.some((event) => event.type === "user" && event.conversationId === secondary.id && event.text === "增加一个验证方向"));
+    assert.ok(pending.events.some((event) => event.type === "job" && event.conversationId === secondary.id && event.jobId === job.id));
+    assert.ok(!pending.events.some((event) => event.type === "user" && event.text === "增加一个验证方向" && event.conversationId === primaryId));
+    assert.ok(!pending.events.some((event) => event.type === "job" && event.jobId === job.id && event.conversationId === primaryId));
+
+    await lab.jobAction(projectId, "exp_001", job.id, "approve");
+    const completed = await waitFor(async () => {
+      const snapshot = await lab.get(projectId, "exp_001");
+      return snapshot.jobs.find((item) => item.id === job.id)?.status === "done" ? snapshot : false;
+    });
+    const lifecycle = completed.events.filter((event) => event.jobId === job.id);
+    assert.ok(lifecycle.length >= 2);
+    assert.ok(lifecycle.every((event) => event.conversationId === secondary.id));
+    assert.ok(!completed.events.some((event) => event.type === "agent" && event.text === "次会话已提交任务" && event.conversationId === primaryId));
+  } finally {
+    await lab.stopAll();
+    await rm(ctx.root(), { recursive: true, force: true });
+  }
+});
+
+test("旧实验迁移后保留原 Codex thread 与聊天历史", async () => {
+  const ctx = setup();
+  const lab = await ctx.make();
+  try {
+    const root = join(ctx.root(), "project", "Experiments", "PaperReproductions", "exp_001");
+    const workspace = join(root, "workspace");
+    await mkdir(join(workspace, ".ar"), { recursive: true });
+    await mkdir(join(root, "jobs"), { recursive: true });
+    await writeFile(join(root, "experiment.json"), JSON.stringify({
+      id: "exp_001", projectId, kind: "reproduction", title: "旧实验", paperId: "paper_001", paperTitle: "论文", goal: "继续", code: "",
+      settings: { network: true }, threadId: "thread-legacy", agent: "idle", activity: "", error: null,
+      notices: [], pendingQuestion: null, pendingContinuation: null, turns: 4, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }));
+    await writeFile(join(root, "events.jsonl"), `${JSON.stringify({ id: "event-legacy", at: new Date().toISOString(), type: "user", text: "旧聊天" })}\n`);
+    const snapshot = await lab.get(projectId, "exp_001");
+    assert.equal(snapshot.experiment.conversations.length, 1);
+    assert.equal(snapshot.experiment.conversations[0].threadId, "thread-legacy");
+    assert.equal(snapshot.experiment.conversations[0].turns, 4);
+    assert.equal(snapshot.events[0].conversationId, snapshot.experiment.conversations[0].id);
+  } finally {
+    await lab.stopAll();
+    await rm(ctx.root(), { recursive: true, force: true });
+  }
+});
+
 test("论文全文按页码排序，并标出页码", () => {
   const text = paperMarkdown("标题", [{ page: 3, text: "c" }, { page: 1, text: "a" }, { page: 3, text: "d" }, { page: 2, text: " " }]);
   assert.match(text, /^# 标题/);
@@ -177,6 +293,7 @@ test("只在 Codex 回合结束后显示最终答复并开放下一条消息", a
   let lab;
   let notifyQuestion;
   let finishTurn;
+  let finalCallbackCount = 0;
   const questionSeen = new Promise((resolve) => { notifyQuestion = resolve; });
   const turnGate = new Promise((resolve) => { finishTurn = resolve; });
   const ctx = setup({ turns: [async (options) => {
@@ -186,6 +303,7 @@ test("只在 Codex 回合结束后显示最终答复并开放下一条消息", a
     notifyQuestion(during);
     await turnGate;
     await options.onEvent({ type: "item.completed", item: { type: "agent_message", text: "请确认 SearchQA 单条完整链。" } });
+    finalCallbackCount += 1;
     return { finalResponse: "请确认 SearchQA 单条完整链。" };
   }, async () => ({ finalResponse: "收到，继续。" })] });
   lab = await ctx.make();
@@ -198,14 +316,15 @@ test("只在 Codex 回合结束后显示最终答复并开放下一条消息", a
     await assert.rejects(lab.send(projectId, "exp_001", "先跑单条链"), /agent 正在工作/);
 
     finishTurn();
-    await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
+    await waitFor(async () => finalCallbackCount === 1 && (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
     const completed = await lab.get(projectId, "exp_001");
+    assert.equal(ctx.calls.length, 1);
     assert.equal(completed.experiment.pendingQuestion, null);
     assert.equal(completed.events.filter((event) => event.type === "agent").length, 1);
     assert.equal(completed.events.find((event) => event.type === "agent").text, "请确认 SearchQA 单条完整链。");
 
     await lab.send(projectId, "exp_001", "先跑 SearchQA 单条完整链");
-    await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
+    await waitFor(async () => ctx.calls.length === 2 && (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
     assert.match(ctx.calls[1].prompt, /先跑 SearchQA 单条完整链/);
     assert.equal(ctx.calls[1].options.threadId, "thread-1");
   } finally {
@@ -244,7 +363,7 @@ test("上游限流等待保留工作状态、原线程和历史，恢复后提�
     assert.equal(during.events.some((event) => event.type === "agent"), false);
     await assert.rejects(lab.send(projectId, "exp_001", "重复消息"), /agent 正在工作/);
     release();
-    await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
+    await waitFor(async () => (await lab.get(projectId, "exp_001")).events.some((event) => event.type === "agent" && event.text === "恢复后完成"));
     const done = await lab.get(projectId, "exp_001");
     assert.equal(done.experiment.turns, 1);
     assert.equal(done.experiment.threadId, "thread-rate-limit");
@@ -262,7 +381,7 @@ test("结构化问题会暂停界面并在同一 Codex 回合收到答案", asyn
   const answerReceived = new Promise((resolve) => { answerSeen = resolve; });
   const ctx = setup({ turns: [async (options) => {
     await options.onThread("thread-question");
-    const answerPath = join(options.workingDirectory, ".ar", "question-answers");
+    const answerPath = join(options.workingDirectory, ".ar", "conversations", options.conversationId, "question-answers");
     const answer = await waitFor(async () => {
       const files = await readdir(answerPath).catch(() => []);
       return files[0] ? JSON.parse(await readFile(join(answerPath, files[0]), "utf8")) : false;
@@ -275,7 +394,8 @@ test("结构化问题会暂停界面并在同一 Codex 回合收到答案", asyn
     await lab.create(projectId, { paperId: "paper_001", goal: "询问复现范围" });
     const workspace = join(ctx.root(), "project", "Experiments", "PaperReproductions", "exp_001", "workspace");
     const requestId = randomUUID();
-    await writeFile(join(workspace, ".ar", "questions", `${requestId}.json`), JSON.stringify({
+    const primaryId = (await lab.get(projectId, "exp_001")).experiment.conversations[0].id;
+    await writeFile(join(workspace, ".ar", "conversations", primaryId, "questions", `${requestId}.json`), JSON.stringify({
       requestId,
       createdAt: new Date().toISOString(),
       questions: [{ id: "scope", header: "复现范围", question: "这次跑哪部分？", options: [{ label: "单条完整链" }, { label: "论文主表" }], isOther: true }],
@@ -288,7 +408,7 @@ test("结构化问题会暂停界面并在同一 Codex 回合收到答案", asyn
     assert.equal(pending.experiment.pendingQuestion.questions[0].options[0].label, "单条完整链");
     await assert.rejects(lab.send(projectId, "exp_001", "先跑完整链"), /先回答弹窗里的问题/);
 
-    await lab.answerQuestion(projectId, "exp_001", requestId, { scope: "单条完整链" });
+    await lab.answerQuestion(projectId, "exp_001", primaryId, requestId, { scope: "单条完整链" });
     const answer = await answerReceived;
     assert.deepEqual(answer.answers, [{ id: "scope", answer: "单条完整链" }]);
     await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
@@ -313,13 +433,18 @@ test("应用重启后仍显示未回答问题，答案会通过原线程继续",
       else options.signal.addEventListener("abort", abort, { once: true });
     });
     return { finalResponse: "不可到达" };
-  }, async () => ({ finalResponse: "按回答继续完成" })] });
+  }, async (options) => {
+    assert.equal(options.threadId, null);
+    await options.onThread("thread-after-answer");
+    return { finalResponse: "按回答继续完成" };
+  }] });
   const first = await ctx.make();
   try {
     await first.create(projectId, { paperId: "paper_001", goal: "等待研究者决定" });
     const workspace = join(ctx.root(), "project", "Experiments", "PaperReproductions", "exp_001", "workspace");
     const requestId = randomUUID();
-    await writeFile(join(workspace, ".ar", "questions", `${requestId}.json`), JSON.stringify({
+    const primaryId = (await first.get(projectId, "exp_001")).experiment.conversations[0].id;
+    await writeFile(join(workspace, ".ar", "conversations", primaryId, "questions", `${requestId}.json`), JSON.stringify({
       requestId,
       createdAt: new Date().toISOString(),
       questions: [{ id: "backend", header: "模型後端", question: "使用哪個後端？", options: [{ label: "Azure/OpenAI-compatible API" }, { label: "先準備環境" }], isOther: true }],
@@ -332,9 +457,10 @@ test("应用重启后仍显示未回答问题，答案会通过原线程继续",
     const recovered = await resumed.get(projectId, "exp_001");
     assert.equal(recovered.experiment.pendingQuestion.requestId, requestId);
     assert.equal(recovered.experiment.agent, "waiting");
-    await resumed.answerQuestion(projectId, "exp_001", requestId, { backend: "先準備環境" });
+    await resumed.answerQuestion(projectId, "exp_001", primaryId, requestId, { backend: "先準備環境" });
     await waitFor(async () => ctx.calls.length === 2 && (await resumed.get(projectId, "exp_001")).experiment.agent === "idle");
-    assert.equal(ctx.calls[1].options.threadId, "thread-after-restart");
+    assert.equal(ctx.calls[1].options.threadId, null);
+    assert.equal((await resumed.get(projectId, "exp_001")).experiment.threadId, "thread-after-answer");
     assert.match(ctx.calls[1].prompt, /先準備環境/);
     assert.equal((await resumed.get(projectId, "exp_001")).experiment.pendingQuestion, null);
   } finally {
@@ -591,7 +717,7 @@ test("应用重启后，关闭期间结束的任务会被收尾并唤醒 agent",
   await writeFile(join(experimentRoot, "jobs", "job_001.status.json"), JSON.stringify({ state: "finished", exitCode: 0, finishedAt: new Date().toISOString() }));
   await writeFile(join(experimentRoot, "workspace", ".ar", "logs", "job_001-train.log"), "epoch 3 acc 61.9\n");
   const experiment = JSON.parse(await readFile(join(experimentRoot, "experiment.json"), "utf8"));
-  await writeFile(join(experimentRoot, "experiment.json"), JSON.stringify({ ...experiment, agent: "working" }));
+  await writeFile(join(experimentRoot, "experiment.json"), JSON.stringify({ ...experiment, agent: "working", conversations: experiment.conversations.map((item, index) => index ? item : { ...item, agent: "working" }) }));
 
   ctx.calls.length = 0;
   const second = await ctx.make();
@@ -775,6 +901,8 @@ test("旧实验保留审批与八次暂停，显式开启持续接续后处理�
     delete experiment.autoWakeStalls;
     experiment.autoWakes = 8;
     experiment.notices.push({ text: "保留的任务结果", wake: true });
+    experiment.conversations[0].autoWakes = 8;
+    experiment.conversations[0].notices = experiment.notices;
     await writeFile(path, JSON.stringify(experiment));
     resumed = await ctx.make();
     await resumed.recover([projectId]);
@@ -830,10 +958,10 @@ test("等待回答和手动停止期间，自动模式不启动待运行任务�
     await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
     const entry = await lab.entry(projectId, "exp_001");
     await lab.serial(entry, () => lab.createJob(entry, { name: "paused", command: "echo resumed-ok" }));
-    entry.experiment.pendingQuestion = { requestId: randomUUID(), questions: [] };
+    entry.experiment.conversations[0].pendingQuestion = { requestId: randomUUID(), questions: [] };
     await lab.updateSettings(projectId, "exp_001", { approveJobs: false });
     assert.equal([...entry.jobs.values()][0].status, "pending");
-    entry.experiment.notices.push({ text: "前序任务已完成", wake: true, progress: true });
+    entry.experiment.conversations[0].notices.push({ text: "前序任务已完成", wake: true, progress: true });
     lab.maybeWake(entry);
     assert.equal(ctx.calls.length, 1);
     await lab.stop(projectId, "exp_001");
@@ -975,6 +1103,82 @@ test("手动运行的命令直接执行、可增量读日志；默认不唤醒 a
     const notified = await lab.runCommand(projectId, "exp_001", { command: progressCommand, notify: true });
     await waitFor(() => ctx.calls.length === 2);
     assert.match(ctx.calls[1].prompt, new RegExp(`研究者手动运行的命令（${notified.id}）`));
+  } finally {
+    await lab.stopAll();
+    await rm(ctx.root(), { recursive: true, force: true });
+  }
+});
+
+test("只能清理已结束后台任务的日志文件，并保留任务记录", async () => {
+  const ctx = setup();
+  const lab = await ctx.make();
+  let reopened;
+  try {
+    await lab.create(projectId, { paperId: "paper_001", goal: "复现" });
+    await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
+    const entry = await lab.entry(projectId, "exp_001");
+    const doneJob = {
+      id: "job_001", name: "old-eval", command: "python eval.py", cwd: ".", note: "", status: "done",
+      requestedAt: new Date().toISOString(), startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+      exitCode: 0, log: ".ar/logs/job_001-old-eval.log",
+    };
+    const runningJob = {
+      ...doneJob, id: "job_002", name: "active-run", status: "running", finishedAt: undefined,
+      exitCode: null, log: ".ar/logs/job_002-active-run.log",
+    };
+    entry.jobs.set(doneJob.id, doneJob);
+    entry.jobs.set(runningJob.id, runningJob);
+    await writeFile(join(entry.root, "jobs", `${doneJob.id}.json`), JSON.stringify(doneJob));
+    await writeFile(join(entry.root, "jobs", `${runningJob.id}.json`), JSON.stringify(runningJob));
+    const doneLog = join(entry.workspace, ...doneJob.log.split("/"));
+    const runningLog = join(entry.workspace, ...runningJob.log.split("/"));
+    await writeFile(doneLog, "old result output\n");
+    await writeFile(runningLog, "still running\n");
+
+    await assert.rejects(lab.clearJobLogs(projectId, "exp_001", [runningJob.id]), /只能清理已经结束/);
+    assert.equal(existsSync(runningLog), true, "运行中的日志不能删除");
+
+    const [cleared] = await lab.clearJobLogs(projectId, "exp_001", [doneJob.id]);
+    assert.equal(cleared.outputDeleted, true);
+    assert.equal(existsSync(doneLog), false);
+    const snapshot = await lab.get(projectId, "exp_001");
+    assert.equal(snapshot.jobs.find((job) => job.id === doneJob.id).status, "done");
+    assert.equal(snapshot.jobs.find((job) => job.id === doneJob.id).outputDeleted, true);
+    assert.ok(snapshot.jobs.find((job) => job.id === doneJob.id).startedAt, "预算相关的开始时间仍保留");
+    assert.equal(entry.jobs.has(doneJob.id), true, "预算与任务历史仍可使用该记录");
+
+    await lab.stopAll();
+    reopened = await ctx.make();
+    const restored = await reopened.get(projectId, "exp_001");
+    assert.equal(restored.jobs.find((job) => job.id === doneJob.id).outputDeleted, true, "清理状态重启后保留");
+  } finally {
+    await lab.stopAll();
+    await reopened?.stopAll();
+    await rm(ctx.root(), { recursive: true, force: true });
+  }
+});
+
+test("日志目录已被手动删除时仍可清理终端任务标签", async () => {
+  const ctx = setup();
+  const lab = await ctx.make();
+  try {
+    await lab.create(projectId, { paperId: "paper_001", goal: "清理缺失的日志目录" });
+    await waitFor(async () => (await lab.get(projectId, "exp_001")).experiment.agent === "idle");
+    const entry = await lab.entry(projectId, "exp_001");
+    const job = {
+      id: "job_001", name: "removed-output", command: "python eval.py", cwd: ".", note: "", status: "done",
+      requestedAt: new Date().toISOString(), startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+      exitCode: 0, log: ".ar/logs/job_001-removed-output.log",
+    };
+    entry.jobs.set(job.id, job);
+    await writeFile(join(entry.root, "jobs", `${job.id}.json`), JSON.stringify(job));
+    await rm(join(entry.workspace, ".ar", "logs"), { recursive: true, force: true });
+    const eventCount = (await lab.get(projectId, "exp_001")).events.length;
+
+    const [cleared] = await lab.clearJobLogs(projectId, "exp_001", [job.id]);
+    assert.equal(cleared.outputDeleted, true);
+    assert.equal((await lab.get(projectId, "exp_001")).events.length, eventCount, "清理不改动聊天和实验事件");
+    assert.equal((await lab.get(projectId, "exp_001")).jobs[0].status, "done", "任务摘要仍保留");
   } finally {
     await lab.stopAll();
     await rm(ctx.root(), { recursive: true, force: true });

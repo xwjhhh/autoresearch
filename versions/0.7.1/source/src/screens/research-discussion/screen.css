@@ -1,0 +1,99 @@
+/* 研究讨论：左侧讨论列表，右侧对话；论文选择在输入框上方的弹出框里，没有右栏。 */
+.ds-page { height: 100%; min-height: 0; display: grid; grid-template-columns: 240px minmax(0, 1fr); color: var(--ink); font-size: 12px; line-height: 1.6; }
+.ds-muted { color: #5f6d6b; font-size: 11px; }
+.ds-link { padding: 0 4px; color: #1c5f50; border: 0; background: transparent; cursor: pointer; font-size: 11px; font-weight: 550; }
+.ds-icon-button { width: 26px; height: 26px; display: inline-grid; place-items: center; padding: 0; color: #5f6d6b; border: 0; border-radius: 5px; background: transparent; cursor: pointer; }
+.ds-icon-button:hover { color: #26332f; background: #eef2ee; }
+.ds-icon-button--danger:hover { color: #94403a; background: #f8ecea; }
+
+.ds-threads { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); border-right: 1px solid #e2e7e3; background: #fff; }
+.ds-threads-head { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 16px; border-bottom: 1px solid #edf0ed; }
+.ds-threads-head strong { font-size: 13px; font-weight: 600; }
+.ds-thread-list { min-height: 0; overflow-y: auto; padding: 6px; scrollbar-width: thin; }
+.ds-thread { width: 100%; display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; margin-bottom: 2px; color: inherit; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font: inherit; text-align: left; }
+.ds-thread:hover { background: #f4f7f4; }
+.ds-thread.is-active { background: #eef6f1; box-shadow: inset 2px 0 var(--teal); }
+.ds-thread strong { overflow: hidden; color: #26332f; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.ds-thread small { color: #5f6d6b; font-size: 11px; }
+.ds-thread-empty { padding: 8px 10px; }
+
+.ds-main { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.ds-head { height: 48px; display: flex; align-items: center; gap: 6px; padding: 0 20px 0 24px; border-bottom: 1px solid #e4e8e4; background: #fff; }
+.ds-head h1 { min-width: 0; margin: 0; overflow: hidden; color: #202b2d; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.ds-head-meta { margin-left: auto; color: #5f6d6b; font-size: 11px; white-space: nowrap; }
+.ds-rename { flex: 1; display: flex; align-items: center; gap: 6px; }
+.ds-rename input { flex: 1; min-width: 0; height: 30px; padding: 0 9px; border: 1px solid #b9d3c5; border-radius: 5px; font: inherit; font-size: 13px; }
+
+.ds-stream { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.ds-stream-inner { width: min(100%, 780px); display: flex; flex-direction: column; gap: 16px; margin: 0 auto; padding: 20px 24px 24px; }
+.ds-loading { display: flex; align-items: center; gap: 7px; }
+.ds-intro { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 20px; text-align: center; }
+.ds-intro-icon { width: 40px; height: 40px; display: grid; place-items: center; color: var(--teal); border: 1px solid #d6e5dc; border-radius: 8px; background: #eef6f1; }
+.ds-intro h2 { margin: 0; color: #34413d; font-size: 15px; font-weight: 600; }
+.ds-intro p { max-width: 460px; margin: 0; color: #5f6d6b; font-size: 12px; line-height: 1.7; }
+
+.ds-msg { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ds-msg > header { display: flex; align-items: center; gap: 7px; color: #5f6d6b; font-size: 11px; }
+.ds-msg > header strong { color: #3f4c48; font-weight: 600; }
+.ds-msg > header time { font: 10px var(--mono); }
+.ds-msg--user { align-self: flex-end; max-width: 80%; }
+.ds-msg--user > header { justify-content: flex-end; }
+.ds-bubble { padding: 9px 13px; color: #24302e; border: 1px solid #d3e5da; border-radius: 8px; background: #eaf3ee; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ds-avatar { width: 20px; height: 20px; display: grid; place-items: center; color: #2f6b52; border-radius: 5px; background: #e3eee5; }
+.ds-scope-tag { padding: 0 6px; color: #4c5a5e; border-radius: 3px; background: #edf1f2; font-size: 10px; line-height: 17px; }
+.ds-answer { padding: 11px 14px; border: 1px solid #e3e8e4; border-radius: 8px; background: #fff; }
+.ds-markdown { color: #2c3836; font-size: 12.5px; line-height: 1.8; overflow-wrap: anywhere; }
+.ds-markdown > :first-child { margin-top: 0; }
+.ds-markdown > :last-child { margin-bottom: 0; }
+.ds-markdown p, .ds-markdown ul, .ds-markdown ol, .ds-markdown blockquote, .ds-markdown pre, .ds-markdown .md-table { margin: 0 0 8px; }
+.ds-markdown h1, .ds-markdown h2, .ds-markdown h3, .ds-markdown h4 { margin: 12px 0 6px; color: #243033; font-size: 13px; font-weight: 600; }
+.ds-markdown ul, .ds-markdown ol { padding-left: 20px; }
+.ds-markdown code { padding: 0 3px; border-radius: 3px; background: #f0f3f0; font: 11px var(--mono); }
+.ds-markdown pre { overflow-x: auto; padding: 8px 10px; border-radius: 5px; background: #f4f6f3; }
+.ds-markdown pre code { padding: 0; background: transparent; }
+.ds-markdown blockquote { padding-left: 10px; color: #4b5956; border-left: 2px solid #d3e0d7; }
+.ds-markdown table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ds-markdown th { padding: 5px 7px; background: #f4f7f4; font-weight: 600; text-align: left; white-space: nowrap; }
+.ds-markdown td { padding: 5px 7px; border-top: 1px solid #e8ece8; vertical-align: top; }
+.ds-cite { display: inline-flex; align-items: center; gap: 3px; margin: 0 2px; padding: 0 5px; color: #1c5f50; border: 1px solid #dce8df; border-radius: 4px; background: #f7faf7; cursor: pointer; font: inherit; font-size: 11px; line-height: 18px; vertical-align: 1px; }
+.ds-cite:hover { border-color: #a9cbb8; background: #eef6f1; }
+.ds-cite:disabled { color: #6b7774; cursor: default; }
+
+.ds-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
+.ds-action { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 7px; color: #1c5f50; border: 0; border-radius: 5px; background: transparent; cursor: pointer; font-size: 11px; font-weight: 550; }
+.ds-action:hover:not(:disabled) { background: #eef6f1; }
+.ds-action:disabled { color: #6b7774; cursor: default; }
+.ds-sources { margin-left: auto; color: #5f6d6b; font-size: 11px; }
+.ds-sources summary { cursor: pointer; }
+.ds-sources ul { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 0; padding: 8px 10px; border: 1px solid #e8ece8; border-radius: 6px; background: #fbfcfb; list-style: none; }
+.ds-sources li button { display: inline-flex; align-items: center; gap: 4px; padding: 0; color: #1c5f50; border: 0; background: transparent; cursor: pointer; font-size: 11px; font-weight: 600; }
+.ds-sources li p { margin: 2px 0 0; color: #4b5956; font-size: 11px; line-height: 1.6; }
+.ds-no-sources { margin-left: auto; }
+.ds-thinking { display: flex; align-items: center; gap: 7px; color: #285e86; font-size: 11px; }
+.ds-error { margin: 0; padding: 8px 12px; color: #7b3a33; border: 1px solid #efd9d5; border-radius: 6px; background: #fbf1ef; font-size: 11px; }
+
+.ds-composer { border-top: 1px solid #e4e8e4; background: #fff; }
+.ds-composer > * { width: min(100%, 780px); margin-right: auto; margin-left: auto; padding-right: 24px; padding-left: 24px; box-sizing: border-box; }
+.ds-composer-tools { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 10px; }
+.ds-scope { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid #e0e6e1; border-radius: 5px; background: #f1f4f1; }
+.ds-scope button { min-height: 24px; padding: 0 9px; color: #4b5956; border: 0; border-radius: 3px; background: transparent; cursor: pointer; font-size: 11px; font-weight: 550; }
+.ds-scope button.is-active { color: #1f3b31; background: #fff; box-shadow: 0 1px 2px rgb(30 50 38 / 10%); }
+.ds-scope-help { flex: 1 1 200px; min-width: 0; }
+.ds-picker { position: absolute; z-index: 6; bottom: calc(100% + 6px); left: 24px; width: min(440px, calc(100% - 48px)); padding: 10px; border: 1px solid #dfe6e0; border-radius: 8px; background: #fff; box-shadow: 0 12px 30px rgba(24, 43, 37, .16); }
+.ds-picker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.ds-picker-head strong { font-size: 12px; }
+.ds-picker-head span { display: flex; align-items: center; gap: 2px; }
+.ds-picker-list { max-height: 320px; overflow-y: auto; }
+.ds-picker-list label { display: flex; align-items: flex-start; gap: 8px; padding: 6px 4px; border-radius: 5px; cursor: pointer; }
+.ds-picker-list label:hover { background: #f6f8f6; }
+.ds-picker-list label.is-disabled { cursor: not-allowed; opacity: .6; }
+.ds-picker-list input { width: 14px; height: 14px; flex: none; margin: 2px 0 0; accent-color: var(--teal); }
+.ds-picker-list span { min-width: 0; display: flex; flex-direction: column; }
+.ds-picker-list strong { overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.ds-picker-list small { color: #5f6d6b; font-size: 11px; }
+.ds-picker > p { margin: 6px 4px 0; }
+.ds-input-row { display: flex; align-items: flex-end; gap: 8px; padding-top: 8px; }
+.ds-input-row textarea { flex: 1; min-height: 52px; max-height: 200px; padding: 8px 11px; color: #2c3836; border: 1px solid #dfe5df; border-radius: 6px; font: inherit; font-size: 12.5px; line-height: 1.6; resize: vertical; }
+.ds-input-row textarea:focus { border-color: #8bb7a1; outline: 0; box-shadow: 0 0 0 2px rgba(35, 121, 99, .09); }
+.ds-send { width: 38px; height: 38px; padding: 0; }
+.ds-hint { padding-top: 4px; padding-bottom: 10px; margin-top: 0; margin-bottom: 0; font-size: 10px; }

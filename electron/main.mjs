@@ -10,7 +10,8 @@ import { discoverProjectDirectories, isProjectId, projectDirectoryName, renamePr
 import { importIntoProject, listProjectFiles, resolveProjectEntry } from "./project-files.mjs";
 import { getCodexSdkStatus, runCodexSdk } from "./codex-sdk.mjs";
 import { searchChunks, termsFor } from "./retrieval.mjs";
-import { extractResponsesText, isCcswitchHealthy, readCodexProviderRuntimeConfig, toResponsesBody } from "./codex-config.mjs";
+import { isCcswitchHealthy, readCodexProviderRuntimeConfig } from "./codex-config.mjs";
+import { LlmService } from "./llm/service.mjs";
 import { cappedEffort, cleanTextForModel, getResumableAnalysis, getResumableFullTextAnalysis, makeIdeaId, makePaperBatches, mergeFullTextParts, parseModelJson, papersNeedingAnalysis, preparePaperText, isSectionHeading } from "./research-workflows.mjs";
 import { P1, P2, P_FULL } from "./prompts.mjs";
 import { interruptRunningAiCallLogs, interruptRunningAiCallLogsInProject, readAiCallLog, writeAiCallLog } from "./ai-call-logs.mjs";
@@ -27,6 +28,7 @@ const settingsPath = join(app.getPath("userData"), "settings.json");
 const secretPath = join(app.getPath("userData"), "api-key.bin");
 const codexHome = process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(app.getPath("home"), ".codex");
 const codexConfigPath = join(codexHome, "config.toml");
+const providerKeysDir = join(app.getPath("userData"), "provider-keys");
 const maxBodyLength = 12_000;
 const codexReasoningEfforts = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"]);
 const activePaperAnalyses = new Set();
@@ -361,8 +363,7 @@ async function setDataRoot(path) {
   projectsRoot = join(dataRoot, "Projects");
   projectRoots = new Map();
   await mkdir(projectsRoot, { recursive: true });
-  const settings = await readJson(settingsPath, {});
-  await writeJson(settingsPath, { ...settings, workspacePath: dataRoot });
+  await llmService.updatePreferences({ workspacePath: dataRoot });
   const workspace = await workspaceLoad();
   await experiments.recover(workspace.projects.map((project) => project.id));
   await migrateProjectDirectories(workspace.projects);
@@ -485,23 +486,17 @@ async function importPapers(projectId) {
   return importPapersFromPaths(projectId, filePaths);
 }
 
-async function updateSettings({ providerMode = "auto", baseUrl, model, apiKey, autoAnalyzeOnImport, reasoningEffort }) {
-  if (providerMode !== "auto" && providerMode !== "manual") throw new Error("模型来源设置无效。");
+/** 通用设置：思考强度、导入后自动分析。模型和服务商由 llmService 管理。 */
+async function updateSettings({ autoAnalyzeOnImport, reasoningEffort } = {}) {
   if (reasoningEffort !== undefined && reasoningEffort !== null && reasoningEffort !== "" && !codexReasoningEfforts.has(reasoningEffort)) {
     throw new Error("Codex 思考强度设置无效。");
   }
-  const url = new URL(cleanString(baseUrl, 300, "API 地址"));
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("API 地址必须使用 http 或 https。");
-  const cleanModel = cleanString(model, 120, "模型名称");
-  const stored = await readJson(settingsPath, {});
-  const settings = { ...stored, providerMode, baseUrl: url.toString().replace(/\/$/, ""), model: cleanModel, reasoningEffort: reasoningEffort || undefined, autoAnalyzeOnImport: typeof autoAnalyzeOnImport === "boolean" ? autoAnalyzeOnImport : stored.autoAnalyzeOnImport !== false };
-  await writeJson(settingsPath, settings);
-  if (typeof apiKey === "string" && apiKey.trim()) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error("系统凭据加密不可用，暂时无法安全保存 API 密钥。");
-    await mkdir(dirname(secretPath), { recursive: true });
-    await writeFile(secretPath, safeStorage.encryptString(apiKey.trim()));
-  }
-  return { ...settings, apiKeyConfigured: Boolean(await readFile(secretPath).catch(() => null)) };
+  const stored = await llmService.readPreferences();
+  await llmService.updatePreferences({
+    reasoningEffort: reasoningEffort || undefined,
+    autoAnalyzeOnImport: typeof autoAnalyzeOnImport === "boolean" ? autoAnalyzeOnImport : stored.autoAnalyzeOnImport !== false,
+  });
+  return currentSettings();
 }
 
 async function readCcswitchStatus() {
@@ -553,106 +548,56 @@ async function readActiveCodexRuntime() {
   }
 }
 
+/** 通用设置。只读 settings.json，不做网络探测；模型状态见 llmService.state()。 */
 async function currentSettings() {
-  const settings = await readJson(settingsPath, { providerMode: "auto", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" });
-  const encrypted = await readFile(secretPath).catch(() => null);
-  const apiKey = encrypted && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(encrypted) : "";
-  const ccswitch = await readCcswitchStatus().catch(() => ({ configFound: false, routingConfigured: false, routingAvailable: false }));
-  const { cliPath: _cliPath, ...codexSdk } = getCodexSdkStatus({ codexHome });
-  return { ...settings, providerMode: settings.providerMode ?? "auto", autoAnalyzeOnImport: settings.autoAnalyzeOnImport !== false, workspacePath: dataRoot, ccswitch, codexSdk, apiKey, apiKeyConfigured: Boolean(encrypted) };
+  const settings = await llmService.readPreferences();
+  return { reasoningEffort: settings.reasoningEffort, autoAnalyzeOnImport: settings.autoAnalyzeOnImport !== false, workspacePath: dataRoot };
 }
 
-async function resolveModelProvider(settings, codexProvider) {
-  if (settings.providerMode !== "manual") {
-    const ccswitch = settings.ccswitch;
-    if (ccswitch.routingConfigured && ccswitch.routingAvailable) {
-      return {
-        type: "responses",
-        baseUrl: ccswitch.baseUrl,
-        model: ccswitch.model || settings.model,
-        apiKey: "PROXY_MANAGED",
-        source: `CC Switch · ${ccswitch.model || settings.model}`,
-      };
-    }
-    if (ccswitch.providerAvailable && codexProvider?.providerBaseUrl && codexProvider.apiKey) {
-      return {
-        type: "responses",
-        baseUrl: codexProvider.providerBaseUrl,
-        model: codexProvider.model || settings.model,
-        apiKey: codexProvider.apiKey,
-        source: `Codex provider · ${ccswitch.provider || settings.model}`,
-      };
-    }
-    const reason = ccswitch.routingConfigured ? "Routing 未运行" : "Routing 未配置";
-    return { type: "chat-completions", baseUrl: settings.baseUrl, model: settings.model, apiKey: settings.apiKey, source: `手动备用接口（${reason}）` };
+/** 选中“跟随 Codex”且没有 CC Switch HTTP 接口时，用 Codex CLI 跑一次纯文本调用。 */
+async function runCodexOnce(messages, options = {}) {
+  let workingDirectory;
+  try {
+    workingDirectory = await mkdtemp(join(app.getPath("temp"), "autoresearch-codex-"));
+    const roleNames = { system: "系统指令", user: "用户", assistant: "此前回复" };
+    const prompt = [
+      "你是 AutoResearch 的研究分析模型。优先遵循系统指令，只基于提供的对话和证据回答用户问题；不要读取本地文件、调用工具或访问外部服务。",
+      ...messages.map(({ role, content }) => `【${roleNames[role] || role}】\n${content}`),
+    ].join("\n\n");
+    const { signal, reasoningEffort, maxAttempts, timeoutMs } = options;
+    const result = await runCodexSdk(prompt, { codexHome, workingDirectory, signal, reasoningEffort, ...(maxAttempts ? { maxAttempts } : {}), ...(timeoutMs ? { timeoutMs } : {}) });
+    if (!result.finalResponse.trim()) throw new Error("Codex CLI 没有返回可读文本。");
+    return { content: result.finalResponse.trim() };
+  } finally {
+    if (workingDirectory) await rm(workingDirectory, { recursive: true, force: true }).catch(() => {});
   }
-  return { type: "chat-completions", baseUrl: settings.baseUrl, model: settings.model, apiKey: settings.apiKey, source: `手动兼容接口 · ${settings.model}` };
 }
 
+const llmService = new LlmService({
+  settingsPath,
+  keysDir: providerKeysDir,
+  legacyKeyPath: secretPath,
+  secrets: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (data) => safeStorage.decryptString(data),
+  },
+  readCodexStatus: async () => {
+    const { cliPath: _cliPath, ...codexSdk } = getCodexSdkStatus({ codexHome });
+    const [ccswitch, runtime] = await Promise.all([
+      readCcswitchStatus().catch(() => ({ configFound: false, routingConfigured: false, routingAvailable: false })),
+      readActiveCodexRuntime(),
+    ]);
+    return { ccswitch, codexSdk, runtime };
+  },
+  runCodexOnce,
+});
+
+/** 一次性调用：按顶栏选中的服务商和模型发请求，失败直接报错，不自动换别的接口。 */
 async function callModelRaw(messages, options = {}) {
   options.signal?.throwIfAborted();
   const settings = await currentSettings();
-  const reasoningEffort = options.reasoningEffort ?? settings.reasoningEffort;
-  const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1_000, options.timeoutMs) : 120_000;
-  let codexError;
-  if (settings.providerMode !== "manual" && settings.codexSdk.cliAvailable) {
-    let workingDirectory;
-    try {
-      workingDirectory = await mkdtemp(join(app.getPath("temp"), "autoresearch-codex-"));
-      const roleNames = { system: "系统指令", user: "用户", assistant: "此前回复" };
-      const prompt = [
-        "你是 AutoResearch 的研究分析模型。优先遵循系统指令，只基于提供的对话和证据回答用户问题；不要读取本地文件、调用工具或访问外部服务。",
-        ...messages.map(({ role, content }) => `【${roleNames[role] || role}】\n${content}`),
-      ].join("\n\n");
-      const result = await runCodexSdk(prompt, { codexHome, workingDirectory, ...options, reasoningEffort });
-      if (result.finalResponse.trim()) return { content: result.finalResponse.trim(), source: `Codex SDK · ${settings.ccswitch.model || "当前模型"}` };
-      throw new Error("Codex SDK 没有返回可读文本。");
-    } catch (error) {
-      if (options.signal?.aborted) throw options.signal.reason;
-      codexError = error;
-      // Batch tasks own their persisted retry loop and must retain the failing provider.
-      if (options.maxAttempts === 1) throw error;
-    } finally {
-      if (workingDirectory) await rm(workingDirectory, { recursive: true, force: true }).catch(() => {});
-    }
-  }
-  const provider = await resolveModelProvider(settings, await readActiveCodexRuntime());
-  const suffix = provider.type === "responses" ? "/responses" : "/chat/completions";
-  const endpoint = provider.baseUrl.endsWith(suffix) ? provider.baseUrl : `${provider.baseUrl}${suffix}`;
-  const headers = { "Content-Type": "application/json" };
-  if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
-  let response;
-  try {
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(provider.type === "responses"
-        ? toResponsesBody(messages, provider.model, reasoningEffort)
-        : {
-            model: provider.model,
-            messages,
-            temperature: options.temperature ?? 0.25,
-            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-          }),
-      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
-    });
-  } catch (error) {
-    if (options.signal?.aborted) throw options.signal.reason;
-    if (codexError) throw new Error(`Codex SDK 连接失败（${codexError instanceof Error ? codexError.message : String(codexError)}）；备用接口也连接失败：${error instanceof Error ? error.message : String(error)}`);
-    throw error;
-  }
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 400);
-    if (codexError) throw new Error(`Codex SDK 连接失败（${codexError instanceof Error ? codexError.message : String(codexError)}）；备用接口也返回 ${response.status}：${detail || response.statusText}`);
-    throw Object.assign(new Error(`模型接口返回 ${response.status}：${detail || response.statusText}`), { status: response.status });
-  }
-  const data = await response.json();
-  const content = provider.type === "responses" ? extractResponsesText(data) : data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
-    if (codexError) throw new Error(`Codex SDK 连接失败（${codexError instanceof Error ? codexError.message : String(codexError)}）；备用接口没有返回可读文本。`);
-    throw new Error("模型接口没有返回可读文本，请检查兼容模式设置。");
-  }
-  return { content: content.trim(), source: provider.source };
+  return llmService.complete(messages, { ...options, reasoningEffort: options.reasoningEffort ?? settings.reasoningEffort });
 }
 
 async function callModel(messages, options = {}) {
@@ -698,14 +643,7 @@ async function callModel(messages, options = {}) {
 }
 
 async function testModelConnection() {
-  const settings = await currentSettings();
-  if (settings.providerMode !== "manual" && !settings.codexSdk.cliAvailable) {
-    const ccswitch = settings.ccswitch;
-    if (!ccswitch.routingAvailable && !ccswitch.providerAvailable && !settings.apiKeyConfigured) {
-      throw new Error(ccswitch.providerReason || ccswitch.routingReason || "当前 Codex provider 不可用，请检查 CC Switch 配置或启用本地 Routing 服务。");
-    }
-  }
-  return callModel([{ role: "user", content: "只回复 OK。" }]);
+  return callModel([{ role: "user", content: "只回复 OK。" }], { timeoutMs: 30_000 });
 }
 
 async function callStructured(prompt, input, options = {}) {
@@ -1295,6 +1233,8 @@ async function sendPaperAgentMessage({ projectId, paperId, content }) {
     await writeAiCallLog(projectRoot, safePaperId, callId, callLog);
 
     const settings = await currentSettings();
+    const agent = await llmService.agentRuntime();
+    callLog.source = `Codex SDK · ${agent.label}`;
     const questionServer = await channel.prepare({
       serverSource: await readFile(new URL("./experiments/question-server.mjs", import.meta.url), "utf8"),
       nodePath: process.env.AUTORESEARCH_NODE_PATH || process.execPath,
@@ -1314,6 +1254,9 @@ async function sendPaperAgentMessage({ projectId, paperId, content }) {
       // 保留研究者在 Codex 里配置的 MCP 服务，另外加上提问工具。
       enableMcpServers: true,
       mcpServers: { autoresearch_questions: questionServer },
+      model: agent.model,
+      configOverrides: agent.configOverrides,
+      extraEnv: agent.env,
       // 不重放整个任务；只有已知上游瞬时错误可以等待后续接原会话。
       timeoutMs: 45 * 60_000,
       maxAttempts: 1,
@@ -1399,6 +1342,9 @@ async function saveIdea({ projectId, idea }) {
   const id = assertIdeaId(existing?.id ?? `idea_${String(project.ideas.length + 1).padStart(3, "0")}`);
   const extensionKeys = ["pipelineSource", "rejectedReason"];
   const extensions = Object.fromEntries(extensionKeys.filter((key) => idea[key] !== undefined).map((key) => [key, idea[key]]));
+  // 设计实验用：基线复现实验和关联论文。实验编号只由平台在创建实验时写入。
+  if (idea.baselineId !== undefined) extensions.baselineId = typeof idea.baselineId === "string" && /^exp_\d{3,}$/.test(idea.baselineId) ? idea.baselineId : null;
+  if (idea.paperIds !== undefined) extensions.paperIds = (Array.isArray(idea.paperIds) ? idea.paperIds : []).filter((paperId) => project.papers.some((paper) => paper.id === paperId)).slice(0, 8);
   const saved = { ...existing, ...extensions, ...values, id, createdAt: existing?.createdAt ?? now, updatedAt: now };
   project.ideas = existing ? project.ideas.map((item) => item.id === id ? saved : item) : [saved, ...project.ideas];
   project.updatedAt = now;
@@ -1408,6 +1354,20 @@ async function saveIdea({ projectId, idea }) {
   await writeFile(join(ideaDir, "idea.md"), saved.draft || `# ${saved.title}\n\n## 核心机制\n${saved.mechanism}\n\n## 与已有方法的区别\n${saved.difference || "未填写"}\n\n## 最小验证实验\n${saved.experiment || "未填写"}\n\n## 关联证据\n${saved.evidence || "未填写"}\n`, "utf8");
   await writeJson(file, project);
   return saved;
+}
+
+/** 设想开始实验后：记下实验编号，状态改为“继续研究”。 */
+async function linkIdeaToExperiment(projectId, ideaId, experimentId) {
+  const { file, project } = await loadProject(projectId);
+  const idea = project.ideas.find((item) => item.id === assertIdeaId(ideaId));
+  if (!idea) return null;
+  idea.experimentIds = [...new Set([...(idea.experimentIds ?? []), experimentId])];
+  idea.status = "continue";
+  idea.updatedAt = new Date().toISOString();
+  project.updatedAt = idea.updatedAt;
+  await writeJson(join(assertProjectId(projectId), "Ideas", idea.id, "idea.json"), idea);
+  await writeJson(file, project);
+  return idea;
 }
 
 async function updateIdea({ projectId, ideaId, status, reason }) {
@@ -1470,6 +1430,14 @@ const environments = new ProjectEnvironmentService({
 
 experiments = new ExperimentLab({
   projectRoot: assertProjectId,
+  // 设计实验从设想（Idea）出发：读取设想，创建实验后把实验编号记回设想上。
+  loadIdea: async (projectId, ideaId) => {
+    const { project } = await loadProject(projectId);
+    const idea = project.ideas.find((item) => item.id === assertIdeaId(ideaId));
+    if (!idea) throw new Error("设想不存在。");
+    return idea;
+  },
+  linkIdea: (projectId, ideaId, experimentId) => linkIdeaToExperiment(projectId, ideaId, experimentId),
   loadPaper: async (projectId, paperId) => {
     const { project } = await loadProject(projectId);
     const paper = findPaper(project, paperId);
@@ -1483,11 +1451,12 @@ experiments = new ExperimentLab({
     };
   },
   environments,
-  runAgent: async (prompt, { workingDirectory, threadId, network, env, signal, onThread, onEvent, onRetry }) => {
+  runAgent: async (prompt, { workingDirectory, threadId, network, env, signal, onThread, onEvent, onRetry, conversationId, shellEnvironment }) => {
     const settings = await currentSettings();
+    const agent = await llmService.agentRuntime();
     const questionEnv = {
-      AUTORESEARCH_QUESTION_REQUESTS: join(workingDirectory, ".ar", "questions"),
-      AUTORESEARCH_QUESTION_ANSWERS: join(workingDirectory, ".ar", "question-answers"),
+      AUTORESEARCH_QUESTION_REQUESTS: join(workingDirectory, ".ar", "conversations", conversationId, "questions"),
+      AUTORESEARCH_QUESTION_ANSWERS: join(workingDirectory, ".ar", "conversations", conversationId, "question-answers"),
     };
     if (!process.env.AUTORESEARCH_NODE_PATH && process.versions.electron) questionEnv.ELECTRON_RUN_AS_NODE = "1";
     return runCodexSdk(prompt, {
@@ -1499,6 +1468,7 @@ experiments = new ExperimentLab({
       onEvent,
       onRetry,
       signal,
+      shellEnvironment,
       mcpServers: {
         autoresearch_questions: {
           command: process.env.AUTORESEARCH_NODE_PATH || process.execPath,
@@ -1512,6 +1482,9 @@ experiments = new ExperimentLab({
       sandboxMode: "workspace-write",
       networkAccessEnabled: network,
       webSearchMode: network ? "live" : "disabled",
+      model: agent.model,
+      configOverrides: agent.configOverrides,
+      extraEnv: agent.env,
       // 不重放整个任务；只有已知上游瞬时错误可以等待后续接原会话。
       maxAttempts: 1,
       maxRecoveryAttempts: 5,
@@ -1544,17 +1517,21 @@ function registerHandlers() {
     "experiment:list": ({ projectId }) => experiments.list(projectId),
     "experiment:get": ({ projectId, experimentId }) => experiments.get(projectId, experimentId),
     "experiment:create": ({ projectId, input }) => experiments.create(projectId, input),
-    "experiment:send": ({ projectId, experimentId, text }) => experiments.send(projectId, experimentId, text),
-    "experiment:answer-question": ({ projectId, experimentId, requestId, answers }) => experiments.answerQuestion(projectId, experimentId, requestId, answers),
-    "experiment:stop": ({ projectId, experimentId }) => experiments.stop(projectId, experimentId),
+    "experiment:conversation:create": ({ projectId, experimentId, title }) => experiments.createConversation(projectId, experimentId, title),
+    "experiment:conversation:rename": ({ projectId, experimentId, conversationId, title }) => experiments.renameConversation(projectId, experimentId, conversationId, title),
+    "experiment:send": ({ projectId, experimentId, conversationId, text }) => experiments.send(projectId, experimentId, text, conversationId),
+    "experiment:answer-question": ({ projectId, experimentId, conversationId, requestId, answers }) => experiments.answerQuestion(projectId, experimentId, conversationId, requestId, answers),
+    "experiment:stop": ({ projectId, experimentId, conversationId }) => experiments.stop(projectId, experimentId, conversationId),
     "experiment:settings": ({ projectId, experimentId, settings }) => experiments.updateSettings(projectId, experimentId, settings),
     "experiment:job": ({ projectId, experimentId, jobId, action }) => experiments.jobAction(projectId, experimentId, jobId, action),
+    "experiment:job-logs:clear": ({ projectId, experimentId, jobIds }) => experiments.clearJobLogs(projectId, experimentId, jobIds),
     "experiment:job-log": ({ projectId, experimentId, jobId }) => experiments.readJobLog(projectId, experimentId, jobId),
     "experiment:job-log-chunk": ({ projectId, experimentId, jobId, from }) => experiments.readJobLogChunk(projectId, experimentId, jobId, from),
     "experiment:run": ({ projectId, experimentId, input }) => experiments.runCommand(projectId, experimentId, input),
     "experiment:terminal": ({ projectId, experimentId, path }) => experiments.openTerminal(projectId, experimentId, path),
     "experiment:record": ({ projectId, experimentId, text }) => experiments.saveRecord(projectId, experimentId, text),
     "experiment:files": ({ projectId, experimentId }) => experiments.listFiles(projectId, experimentId),
+    "experiment:diff": ({ projectId, experimentId }) => experiments.diff(projectId, experimentId),
   })) ipcMain.handle(channel, async (_event, payload) => {
     await loadProject(payload?.projectId);
     return handler(payload ?? {});
@@ -1683,11 +1660,15 @@ function registerHandlers() {
     const label = paperIds.length === 1 ? "论文原文提问" : "课题研究讨论";
     return withAiCallContext(payload, { label, taskType: "discussion", scopeId }, () => sendMessage(payload));
   });
-  ipcMain.handle("settings:get", async () => {
-    const { apiKey, apiKeyConfigured, ...settings } = await currentSettings();
-    return { ...settings, apiKeyConfigured };
-  });
+  ipcMain.handle("settings:get", () => currentSettings());
   ipcMain.handle("settings:save", (_event, payload) => updateSettings(payload));
+  // 模型服务商：密钥只进不出，界面只能看到 hasKey。
+  ipcMain.handle("llm:state", (_event, payload) => llmService.state({ refresh: payload?.refresh === true }));
+  ipcMain.handle("llm:provider:save", async (_event, payload) => { await llmService.saveProvider(payload ?? {}); return llmService.state(); });
+  ipcMain.handle("llm:provider:delete", async (_event, payload) => { await llmService.deleteProvider(String(payload?.providerId ?? "")); return llmService.state(); });
+  ipcMain.handle("llm:select", async (_event, payload) => { await llmService.select(payload?.slot, payload ?? {}); return llmService.state(); });
+  ipcMain.handle("llm:models", (_event, payload) => llmService.listModels(payload ?? {}));
+  ipcMain.handle("llm:test", (_event, payload) => llmService.test(payload ?? {}));
   ipcMain.handle("settings:test", (_event, payload) => payload?.projectId
     ? withAiCallContext(payload, { label: "测试模型连接", taskType: "settings" }, () => testModelConnection())
     : testModelConnection());

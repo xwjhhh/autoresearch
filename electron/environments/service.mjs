@@ -264,18 +264,20 @@ export class ProjectEnvironmentService {
     const entry = await this.entry(projectId);
     for (const file of (await readdir(directory).catch(() => [])).filter((name) => /^[0-9a-f-]{36}\.json$/i.test(name)).slice(0, 50)) {
       const path = join(directory, file);
+      let conversationId = null;
       try {
         const info = await lstat(path);
         if (!info.isFile() || info.isSymbolicLink() || info.size > 32_000) throw new Error("依赖申请文件无效。");
         const input = await json(path, null);
+        conversationId = typeof input?.conversationId === "string" && /^conv_[A-Za-z0-9_-]{3,64}$/.test(input.conversationId) ? input.conversationId : null;
         const packages = validatePackages(input?.packages, input?.manager);
         const id = file.slice(0, -5);
         if (!entry.requests.some((item) => item.id === id)) {
-          entry.requests.push({ id, experimentId: experiment.id, experiment: experiment.title, manager: input.manager, packages, note: String(input.note || "").slice(0, 1000), status: "pending", changes: packages.map((name) => ({ name, before: null, after: "待解析" })) });
+          entry.requests.push({ id, experimentId: experiment.id, experiment: experiment.title, ...(conversationId ? { conversationId } : {}), manager: input.manager, packages, note: String(input.note || "").slice(0, 1000), status: "pending", changes: packages.map((name) => ({ name, before: null, after: "待解析" })) });
           await this.persist(entry); this.publish(entry);
         }
         await rename(path, `${path}.received`);
-      } catch (error) { await rename(path, `${path}.invalid`).catch(() => {}); await this.notify(projectId, experiment.id, `依赖申请未接收：${error.message}`, false); }
+      } catch (error) { await rename(path, `${path}.invalid`).catch(() => {}); await this.notify(projectId, experiment.id, `依赖申请未接收：${error.message}`, false, conversationId); }
     }
   }
   async resolvePlan(entry, request) {
@@ -363,7 +365,7 @@ export class ProjectEnvironmentService {
     });
     if (completed) {
       const outcome = completed.changes ? "已安装并完成兼容性检查" : "已满足要求，无需重复安装";
-      await this.notify(projectId, completed.request.experimentId, `课题共享依赖申请已确认：${completed.request.packages.join("、")}；${outcome}。环境修订 v${result.environment.revision}，可以继续实验。`, true);
+      await this.notify(projectId, completed.request.experimentId, `课题共享依赖申请已确认：${completed.request.packages.join("、")}；${outcome}。环境修订 v${result.environment.revision}，可以继续实验。`, true, completed.request.conversationId);
     }
     return result;
   }
@@ -372,7 +374,7 @@ export class ProjectEnvironmentService {
     if (entry.operation) throw new Error("请等待当前环境操作结束。");
     const request = this.request(entry, id); request.status = "rejected";
     await this.persist(entry); this.publish(entry);
-    await this.notify(projectId, request.experimentId, "研究者暂不安装本次依赖，请等待后续指示。", false);
+    await this.notify(projectId, request.experimentId, "研究者暂不安装本次依赖，请等待后续指示。", false, request.conversationId);
     return this.get(projectId);
   }
 }

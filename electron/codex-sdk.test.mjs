@@ -184,6 +184,38 @@ test("runs one read-only thread with the configured Codex home and returns its f
   }
 });
 
+test("injects an app-selected agent provider through --config, --model and an env key", async () => {
+  const root = tempDirectory();
+  try {
+    fakeCli(join(root, "bin", "codex.exe"));
+    const workingDirectory = join(root, "project");
+    mkdirSync(workingDirectory, { recursive: true });
+    let sdkOptions;
+    let threadOptions;
+    await runCodexSdk("复现实验", {
+      env: { PATH: join(root, "bin"), USERPROFILE: root },
+      workingDirectory,
+      model: "gpt-4.1",
+      configOverrides: { model_provider: "autoresearch", model_providers: { autoresearch: { name: "中转站", base_url: "https://relay.example/v1", wire_api: "responses", env_key: "AUTORESEARCH_AGENT_API_KEY" } } },
+      extraEnv: { AUTORESEARCH_AGENT_API_KEY: "sk-relay-secret" },
+      sdkFactory: (options) => {
+        sdkOptions = options;
+        return { startThread: (optionsForThread) => { threadOptions = optionsForThread; return { run: async () => ({ finalResponse: "ok" }) }; } };
+      },
+    });
+
+    assert.equal(threadOptions.model, "gpt-4.1");
+    assert.equal(sdkOptions.config.model_provider, "autoresearch");
+    assert.equal(sdkOptions.config.model_providers.autoresearch.base_url, "https://relay.example/v1");
+    assert.equal(sdkOptions.env.AUTORESEARCH_AGENT_API_KEY, "sk-relay-secret");
+    // 密钥只在环境变量里，不进 --config 参数（命令行参数在进程列表里可见）。
+    assert.equal(JSON.stringify(sdkOptions.config).includes("sk-relay-secret"), false);
+    assert.deepEqual(sdkOptions.config.mcp_servers, {});
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("enables writable project access, live web search, and configured MCP tools when requested", async () => {
   const root = tempDirectory();
   try {
@@ -392,6 +424,7 @@ test("Codex SDK accepts a task-scoped local question MCP server", async () => {
     await runCodexSdk("先问研究者", {
       env: { PATH: join(root, "bin"), USERPROFILE: root },
       workingDirectory,
+      shellEnvironment: { AUTORESEARCH_CONVERSATION_ID: "conv_secondary123" },
       mcpServers,
       sdkFactory: (options) => {
         sdkOptions = options;
@@ -407,7 +440,7 @@ test("Codex SDK accepts a task-scoped local question MCP server", async () => {
     });
     assert.deepEqual(sdkOptions.config, {
       mcp_servers: mcpServers,
-      shell_environment_policy: { set: { PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } },
+      shell_environment_policy: { set: { PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", AUTORESEARCH_CONVERSATION_ID: "conv_secondary123" } },
     });
   } finally {
     rmSync(root, { recursive: true, force: true });

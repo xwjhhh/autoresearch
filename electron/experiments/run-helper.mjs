@@ -40,7 +40,9 @@ const command = (tail.length === 1 ? tail[0] : tail.map(quote).join(" ")).trim()
 if (!command) fail("命令不能为空。");
 if (command.length > 8000) fail("命令太长。请先把它写成脚本，再提交运行脚本的命令。");
 
-const directory = join(here, "requests");
+const conversationId = process.env.AUTORESEARCH_CONVERSATION_ID;
+if (conversationId && !/^conv_[A-Za-z0-9_-]{3,64}$/.test(conversationId)) fail("会话编号无效。");
+const directory = conversationId ? join(here, "conversations", conversationId, "requests") : join(here, "requests");
 mkdirSync(directory, { recursive: true });
 const file = join(directory, `${Date.now()}-${process.pid}.json`);
 const request = { name, command, cwd: rel || ".", note: note.slice(0, 500), requestedAt: new Date().toISOString() };

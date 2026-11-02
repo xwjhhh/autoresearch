@@ -18,6 +18,11 @@ const directory = join(dirname(fileURLToPath(import.meta.url)), "environment-req
 await mkdir(directory, { recursive: true });
 const id = randomUUID();
 const path = join(directory, `${id}.json`);
-await writeFile(`${path}.tmp`, JSON.stringify({ id, manager, packages, note: noteIndex >= 0 ? options[noteIndex + 1] : "" }), "utf8");
+const conversationId = process.env.AUTORESEARCH_CONVERSATION_ID;
+const request = {
+  id, manager, packages, note: noteIndex >= 0 ? options[noteIndex + 1] : "",
+  ...(typeof conversationId === "string" && /^conv_[A-Za-z0-9_-]{3,64}$/.test(conversationId) ? { conversationId } : {}),
+};
+await writeFile(`${path}.tmp`, JSON.stringify(request), "utf8");
 await rename(`${path}.tmp`, path);
 console.log(`依赖申请 ${id} 已提交，等待研究者在“运行环境”确认。没有安装任何包。`);

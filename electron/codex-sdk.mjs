@@ -166,6 +166,11 @@ export async function runCodexSdk(prompt, {
   onThread,
   onRetry,
   onEvent,
+  shellEnvironment = {},
+  // 应用里选的 Agent 服务商：model 走 --model，configOverrides 走 --config（如 model_provider），extraEnv 放密钥变量。
+  model,
+  configOverrides,
+  extraEnv,
   maxRecoveryAttempts = 0,
   maxAttempts = 6,
   timeoutMs = 600_000,
@@ -196,18 +201,28 @@ export async function runCodexSdk(prompt, {
 
   const sdkEnv = environmentVariables(Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string")), null);
   sdkEnv.CODEX_HOME = resolveCodexHome(env, codexHome);
+  for (const [name, value] of Object.entries(extraEnv ?? {})) if (typeof value === "string") sdkEnv[name] = value;
   addAdjacentCodexPath(cliPath, sdkEnv);
   const mcpConfig = mcpServers && Object.keys(mcpServers).length
     ? { mcp_servers: mcpServers }
     : enableMcpServers ? undefined : { mcp_servers: {} };
+  const shellConversationId = typeof shellEnvironment.AUTORESEARCH_CONVERSATION_ID === "string"
+    && /^conv_[A-Za-z0-9_-]{3,64}$/.test(shellEnvironment.AUTORESEARCH_CONVERSATION_ID)
+    ? shellEnvironment.AUTORESEARCH_CONVERSATION_ID
+    : undefined;
   const client = factory({
     env: sdkEnv,
     codexPathOverride: cliPath,
     config: {
+      ...configOverrides,
       ...mcpConfig,
       // CLI shell inheritance can filter PYTHON* from its process environment.
       // Override only these leaves, retaining the user's inherit/include/exclude policy.
-      shell_environment_policy: { set: { PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } },
+      shell_environment_policy: { set: {
+        PYTHONUTF8: "1",
+        PYTHONIOENCODING: "utf-8",
+        ...(shellConversationId ? { AUTORESEARCH_CONVERSATION_ID: shellConversationId } : {}),
+      } },
     },
   });
   const threadOptions = {
@@ -219,6 +234,7 @@ export async function runCodexSdk(prompt, {
     ...(webSearchMode ? { webSearchMode } : {}),
     ...(additionalDirectories?.length ? { additionalDirectories } : {}),
     ...(reasoningEffort ? { modelReasoningEffort: reasoningEffort } : {}),
+    ...(model ? { model } : {}),
   };
   let thread;
   if (threadId) {

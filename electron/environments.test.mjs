@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -253,6 +254,39 @@ test("collects a dependency request from the supplied experiment workspace", asy
     assert.equal(snapshot.request.experimentId, "exp_002");
     assert.equal(snapshot.request.packages[0], "skillopt==0.2.0");
     assert.equal(JSON.parse(await readFile(`${requestPath}.received`, "utf8")).id, requestId);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dependency approval and rejection notices return to the requesting conversation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "autoresearch-env-conversation-"));
+  const projectId = randomUUID();
+  const conversationId = "conv_secondary123";
+  const workspace = join(root, "experiment", "workspace");
+  const requestDirectory = join(workspace, ".ar", "environment-requests");
+  const helper = join(workspace, ".ar", "environment.mjs");
+  const notices = [];
+  const service = new ProjectEnvironmentService({
+    dataRoot: () => root,
+    project: async () => ({ title: "RSI" }),
+    env: { PATH: "" },
+    notify: async (...args) => notices.push(args),
+    run: async () => { throw new Error("Conda must not run in this test"); },
+  });
+  try {
+    await mkdir(requestDirectory, { recursive: true });
+    await writeFile(helper, await readFile(new URL("./environments/request-helper.mjs", import.meta.url), "utf8"));
+    execFileSync(process.execPath, [helper, "--manager", "pip", "--", "numpy>=1.25"], {
+      env: { ...process.env, AUTORESEARCH_CONVERSATION_ID: conversationId },
+    });
+    await service.collect(projectId, { id: "exp_002", title: "SkillOpt" }, workspace);
+    const snapshot = await service.get(projectId);
+    assert.equal(snapshot.request.conversationId, conversationId);
+    await service.reject(projectId, snapshot.request.id);
+    assert.equal(notices[0][1], "exp_002");
+    assert.equal(notices[0][3], false);
+    assert.equal(notices[0][4], conversationId);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

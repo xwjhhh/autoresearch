@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDown, ChevronDown, ChevronUp, Copy, ExternalLink, LoaderCircle, Play, Search, Square, SquareTerminal, X } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronUp, Copy, ExternalLink, LoaderCircle, Play, Search, Square, SquareTerminal, Trash2, X } from "lucide-react";
 import type { DesktopBridge, ExperimentJob, ExperimentSnapshot } from "../../types";
 import { LogScreen, type LogStyle } from "./logScreen";
 
@@ -279,18 +279,21 @@ function RunForm({ busy, defaultCwd, onRun, onClose }: { busy: boolean; defaultC
 
 export type TerminalTab = "agent" | string;
 
-export function TerminalDock({ api, projectId, snapshot, open, onOpenChange, active, onActive, busyKey, onJobAction, onError }: {
+export function TerminalDock({ api, projectId, snapshot, conversationId, open, onOpenChange, active, onActive, busyKey, onJobAction, onError }: {
   api: DesktopBridge; projectId: string; snapshot: ExperimentSnapshot; open: boolean; onOpenChange: (open: boolean) => void;
+  conversationId?: string;
   active: TerminalTab | null; onActive: (tab: TerminalTab) => void; busyKey: string;
   onJobAction: (job: ExperimentJob, action: "stop") => void; onError: (message: string) => void;
 }) {
   const experimentId = snapshot.experiment.id;
+  const activeConversationId = conversationId ?? snapshot.experiment.conversations[0]?.id;
   const cache = useRef(new Map<string, LogCache>()).current;
   const [height, setHeight] = useState(() => {
     const max = Math.max(160, window.innerHeight * 0.75);
     try { return Math.min(Math.max(Number(localStorage.getItem(HEIGHT_KEY)) || 280, 160), max); } catch { return Math.min(280, max); }
   });
   const [running, setRunning] = useState(false);
+  const [cleaningLogs, setCleaningLogs] = useState(false);
   const [showRun, setShowRun] = useState(false);
   const [, tick] = useState(0);
   const seen = useRef<Set<string> | null>(null);
@@ -301,20 +304,30 @@ export function TerminalDock({ api, projectId, snapshot, open, onOpenChange, act
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  const tabs = useMemo(() => snapshot.jobs.filter((job) => job.status !== "pending" && job.status !== "rejected").sort((a, b) => b.id.localeCompare(a.id, "en", { numeric: true })), [snapshot.jobs]);
+  const conversationSnapshot = useMemo(() => {
+    const owns = (id?: string | null) => (id ?? snapshot.experiment.conversations[0]?.id) === activeConversationId;
+    return {
+      ...snapshot,
+      events: snapshot.events.filter((event) => owns(event.conversationId)),
+      jobs: snapshot.jobs.filter((job) => owns(job.conversationId)),
+      live: owns(snapshot.liveConversationId) ? snapshot.live : null,
+    };
+  }, [snapshot, activeConversationId]);
+  const tabs = useMemo(() => conversationSnapshot.jobs.filter((job) => job.status !== "pending" && job.status !== "rejected" && !job.outputDeleted).sort((a, b) => b.id.localeCompare(a.id, "en", { numeric: true })), [conversationSnapshot.jobs]);
+  const clearableTabs = tabs.filter((job) => job.status !== "running");
   const runningJobs = tabs.filter((job) => job.status === "running");
   const current = active === "agent" ? "agent" : tabs.find((job) => job.id === active)?.id ?? runningJobs[0]?.id ?? tabs[0]?.id ?? "agent";
   const currentJob = tabs.find((job) => job.id === current);
 
   // 新开始运行的任务：自动展开面板并切过去。打开页面时已经在跑的任务不算。
   useEffect(() => {
-    const ids = new Set(snapshot.jobs.filter((job) => job.status === "running").map((job) => job.id));
+    const ids = new Set(conversationSnapshot.jobs.filter((job) => job.status === "running").map((job) => job.id));
     if (seen.current) {
       const fresh = [...ids].filter((id) => !seen.current!.has(id));
       if (fresh.length) { onActive(fresh[fresh.length - 1]); onOpenChange(true); }
     }
     seen.current = ids;
-  }, [snapshot.jobs, onActive, onOpenChange]);
+  }, [conversationSnapshot.jobs, onActive, onOpenChange]);
 
   useEffect(() => {
     if (!runningJobs.length || !open) return;
@@ -341,7 +354,7 @@ export function TerminalDock({ api, projectId, snapshot, open, onOpenChange, act
   const run = async (input: { command: string; cwd: string; notify: boolean }) => {
     setRunning(true);
     try {
-      const job = await api.runExperimentCommand(projectId, experimentId, input);
+      const job = await api.runExperimentCommand(projectId, experimentId, { ...input, conversationId });
       onActive(job.id);
       return true;
     } catch (reason) {
@@ -354,8 +367,24 @@ export function TerminalDock({ api, projectId, snapshot, open, onOpenChange, act
 
   const openShell = () => void api.openExperimentTerminal(projectId, experimentId, currentJob?.cwd ?? ".").catch((reason) => onError(cleanError(reason)));
 
+  const clearLogs = async (jobIds: string[]) => {
+    if (cleaningLogs || !jobIds.length) return;
+    const names = tabs.filter((job) => jobIds.includes(job.id)).map((job) => job.name);
+    const target = jobIds.length === 1 ? `“${names[0] ?? jobIds[0]}”` : `${jobIds.length} 个已结束任务`;
+    if (!window.confirm(`删除 ${target} 的日志文件并从终端移除标签？任务记录、预算统计和聊天记录会保留。日志无法恢复。`)) return;
+    setCleaningLogs(true);
+    try {
+      await api.clearExperimentJobLogs(projectId, experimentId, jobIds);
+      for (const jobId of jobIds) cache.delete(jobId);
+    } catch (reason) {
+      onError(cleanError(reason));
+    } finally {
+      setCleaningLogs(false);
+    }
+  };
+
   const preview = runningJobs[0];
-  const live = snapshot.live;
+  const live = conversationSnapshot.live;
 
   return <section className={`term-dock ${open ? "is-open" : ""}`} style={open ? { height } : undefined} aria-label="终端">
     {open && <div className="term-resize" onPointerDown={startResize} role="separator" aria-orientation="horizontal" aria-label="拖动调整终端高度" />}
@@ -369,16 +398,20 @@ export function TerminalDock({ api, projectId, snapshot, open, onOpenChange, act
         <button type="button" role="tab" aria-selected={current === "agent"} className={`term-tab ${current === "agent" ? "is-active" : ""}`} onClick={() => onActive("agent")}>
           <span className={`term-dot ${live ? "is-running" : "is-muted"}`} />Agent 命令
         </button>
-        {tabs.map((job) => <button key={job.id} type="button" role="tab" aria-selected={current === job.id} className={`term-tab ${current === job.id ? "is-active" : ""}`} onClick={() => onActive(job.id)} title={job.command}>
-          <span className={`term-dot ${dot[job.status] ?? ""}`} />{job.origin === "user" ? `手动 ${job.id.replace("job_", "#")}` : job.name}
-          {job.status === "running" && <span className="term-tab-time">{elapsed(job.startedAt)}</span>}
-        </button>)}
+        {tabs.map((job) => <div key={job.id} className={`term-tab-item ${current === job.id ? "is-active" : ""}`} role="presentation">
+          <button type="button" role="tab" aria-selected={current === job.id} className={`term-tab ${current === job.id ? "is-active" : ""}`} onClick={() => onActive(job.id)} title={job.command}>
+            <span className={`term-dot ${dot[job.status] ?? ""}`} />{job.origin === "user" ? `手动 ${job.id.replace("job_", "#")}` : job.name}
+            {job.status === "running" && <span className="term-tab-time">{elapsed(job.startedAt)}</span>}
+          </button>
+          {job.status !== "running" && <button type="button" className="term-tab-delete" aria-label={`删除 ${job.name} 的日志并移除终端标签`} title="删除日志并移除标签" disabled={cleaningLogs} onClick={() => void clearLogs([job.id])}><Trash2 size={12} /></button>}
+        </div>)}
       </div> : <p className="term-summary">
         {preview ? <><span className="term-dot is-running" />{runningJobs.length > 1 ? `${runningJobs.length} 个任务运行中` : preview.name}<code>{preview.lastLine || "等待输出"}</code></>
           : live ? <><span className="term-dot is-running" />agent 正在执行<code>{live.command}</code></>
           : <span className="term-summary-idle">{tabs.length ? `${tabs.length} 个后台任务，没有在运行` : "后台任务和 agent 执行的命令会显示在这里"}</span>}
       </p>}
       <div className="term-head-actions">
+        {clearableTabs.length > 0 && <button type="button" className="term-btn" disabled={cleaningLogs} onClick={() => void clearLogs(clearableTabs.map((job) => job.id))} title="删除所有已结束任务的日志文件，保留任务记录和聊天记录">{cleaningLogs ? <LoaderCircle className="spin" size={12} /> : <Trash2 size={12} />}清理已结束</button>}
         <button type="button" className={`term-btn ${showRun && open ? "is-on" : ""}`} onClick={() => { onOpenChange(true); setShowRun(!showRun || !open); }} title="输入一条命令，交给后台执行器运行">手动运行</button>
         <button type="button" className="term-btn" onClick={openShell} title="在实验工作目录打开一个系统 PowerShell 窗口，随便敲，与平台互不影响">打开 PowerShell</button>
       </div>
@@ -386,7 +419,7 @@ export function TerminalDock({ api, projectId, snapshot, open, onOpenChange, act
     {open && <>
       {showRun && <RunForm busy={running} defaultCwd={currentJob?.cwd ?? "."} onRun={run} onClose={() => setShowRun(false)} />}
       {current === "agent" || !currentJob
-        ? <AgentPane snapshot={snapshot} />
+        ? <AgentPane key={activeConversationId ?? "main"} snapshot={conversationSnapshot} />
         : <JobPane key={currentJob.id} api={api} projectId={projectId} experimentId={experimentId} job={currentJob} cache={cache} busy={busyKey === `job-${currentJob.id}`} onJobAction={onJobAction} onError={onError} />}
     </>}
   </section>;

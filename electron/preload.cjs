@@ -7,17 +7,21 @@ contextBridge.exposeInMainWorld("autoresearch", {
   listExperiments: (projectId) => invoke("experiment:list", { projectId }),
   getExperiment: (projectId, experimentId) => invoke("experiment:get", { projectId, experimentId }),
   createExperiment: (projectId, input) => invoke("experiment:create", { projectId, input }),
-  sendExperimentMessage: (projectId, experimentId, text) => invoke("experiment:send", { projectId, experimentId, text }),
-  answerExperimentQuestion: (projectId, experimentId, requestId, answers) => invoke("experiment:answer-question", { projectId, experimentId, requestId, answers }),
-  stopExperiment: (projectId, experimentId) => invoke("experiment:stop", { projectId, experimentId }),
+  createExperimentConversation: (projectId, experimentId, title) => invoke("experiment:conversation:create", { projectId, experimentId, title }),
+  renameExperimentConversation: (projectId, experimentId, conversationId, title) => invoke("experiment:conversation:rename", { projectId, experimentId, conversationId, title }),
+  sendExperimentMessage: (projectId, experimentId, conversationId, text) => invoke("experiment:send", { projectId, experimentId, conversationId, text }),
+  answerExperimentQuestion: (projectId, experimentId, conversationId, requestId, answers) => invoke("experiment:answer-question", { projectId, experimentId, conversationId, requestId, answers }),
+  stopExperiment: (projectId, experimentId, conversationId) => invoke("experiment:stop", { projectId, experimentId, conversationId }),
   updateExperimentSettings: (projectId, experimentId, settings) => invoke("experiment:settings", { projectId, experimentId, settings }),
   experimentJobAction: (projectId, experimentId, jobId, action) => invoke("experiment:job", { projectId, experimentId, jobId, action }),
+  clearExperimentJobLogs: (projectId, experimentId, jobIds) => invoke("experiment:job-logs:clear", { projectId, experimentId, jobIds }),
   readExperimentJobLog: (projectId, experimentId, jobId) => invoke("experiment:job-log", { projectId, experimentId, jobId }),
   readExperimentJobLogChunk: (projectId, experimentId, jobId, from) => invoke("experiment:job-log-chunk", { projectId, experimentId, jobId, from }),
   runExperimentCommand: (projectId, experimentId, input) => invoke("experiment:run", { projectId, experimentId, input }),
   openExperimentTerminal: (projectId, experimentId, path) => invoke("experiment:terminal", { projectId, experimentId, path }),
   saveExperimentRecord: (projectId, experimentId, text) => invoke("experiment:record", { projectId, experimentId, text }),
   listExperimentFiles: (projectId, experimentId) => invoke("experiment:files", { projectId, experimentId }),
+  readExperimentDiff: (projectId, experimentId) => invoke("experiment:diff", { projectId, experimentId }),
   openExperimentPath: (projectId, experimentId, path) => invoke("experiment:open", { projectId, experimentId, path }),
   onExperimentUpdate: (callback) => {
     const listener = (_event, update) => callback(update);
@@ -92,6 +96,13 @@ contextBridge.exposeInMainWorld("autoresearch", {
   getSettings: () => invoke("settings:get"),
   saveSettings: (payload) => invoke("settings:save", payload),
   testSettings: (projectId) => invoke("settings:test", { projectId }),
+  // 模型服务商
+  getLlmState: (refresh) => invoke("llm:state", { refresh: refresh === true }),
+  saveLlmProvider: (provider) => invoke("llm:provider:save", provider),
+  deleteLlmProvider: (providerId) => invoke("llm:provider:delete", { providerId }),
+  selectLlmModel: (slot, providerId, model) => invoke("llm:select", { slot, providerId, model }),
+  listLlmModels: (payload) => invoke("llm:models", payload),
+  testLlmModel: (providerId, model) => invoke("llm:test", { providerId, model }),
   getWorkspacePath: () => invoke("workspace:path"),
 });
 

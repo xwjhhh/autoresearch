@@ -1,0 +1,74 @@
+{
+  "name": "autoresearch-desktop",
+  "version": "0.7.1",
+  "description": "Local-first research workspace with literature discussion and idea review",
+  "author": "AutoResearch",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "start": "electron .",
+    "test": "node --test electron/*.test.mjs scripts/*.test.mjs",
+    "archive:version": "node scripts/archive-version.mjs",
+    "dist:win": "node scripts/archive-version.mjs --check && npm run build && electron-builder --win nsis --publish never && npm run archive:version",
+    "dist:win:replace": "node scripts/archive-version.mjs --check --replace-existing && npm run build && electron-builder --win nsis --publish never && npm run archive:version -- --replace-existing"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.163.0",
+    "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "smol-toml": "^1.9.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "io.autoresearch.desktop",
+    "productName": "AutoResearch",
+    "directories": {
+      "output": "versions/.build/windows"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json",
+      "node_modules/@openai/codex-sdk/**/*",
+      "!node_modules/@openai/codex/**/*",
+      "!node_modules/@openai/codex-win32-*/**/*",
+      "node_modules/pdfjs-dist/**/*",
+      "node_modules/react/**/*",
+      "node_modules/react-dom/**/*",
+      "node_modules/lucide-react/**/*",
+      "node_modules/smol-toml/**/*"
+    ],
+    "extraResources": [],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "AutoResearch-${version}-Windows-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AutoResearch",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

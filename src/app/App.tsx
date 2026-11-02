@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  Archive,
   ArrowUpRight,
   BookOpen,
   Check,
@@ -24,31 +23,33 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import type { AnalysisDepth, CodexReasoningEffort, Discussion, ExperimentSummary, Idea, IdeaStatus, Message, ModelSettings, Paper, PaperAnalysisProgress, PaperRole, Project, ProjectFileNode, ResearchNote, SearchResult, View, WorkspaceSnapshot } from "../types";
+import type { AnalysisDepth, CodexReasoningEffort, Discussion, ExperimentSummary, Idea, IdeaStatus, LlmState, Message, ModelSettings, Paper, PaperAnalysisProgress, PaperRole, Project, ProjectFileNode, ResearchNote, SearchResult, View, WorkspaceSnapshot } from "../types";
 import type { ProjectEnvironmentSnapshot } from "../screens/project-environment/model";
 import { OverviewView } from "../screens/overview/OverviewView";
 import { DiscussionView, type DiscussionSendInput } from "../screens/research-discussion/DiscussionView";
 import { PaperAnalysisPage } from "../screens/paper-analysis/PaperAnalysisPage";
 import { IdeaModal } from "../screens/idea-pool/IdeaModal";
-import { IdeaPoolView } from "../screens/idea-pool/IdeaPoolView";
 import { ExperimentView, type ExperimentIntent } from "../screens/experiments/ExperimentView";
 import { ProjectEnvironmentPage } from "../screens/project-environment/ProjectEnvironmentView";
 import { ResearchNotesView } from "../screens/research-notes/ResearchNotesView";
 import { ProjectFilesView } from "../screens/project-files/ProjectFilesView";
 import { IconButton, Modal } from "../components/Shared";
 import { anyAnalysis, isLiveProgress, taskKeys } from "./tasks";
+import { ModelSwitcher } from "../components/llm/ModelSwitcher";
+import { ProviderSettings, type ProviderActions } from "../components/llm/ProviderSettings";
+import { selectionLabel, selectionReady } from "../components/llm/labels";
 const PdfCitationViewer = lazy(() => import("../components/PdfCitationViewer"));
 
 const viewTitles: Record<View, string> = {
   overview: "课题概览",
   papers: "文献分析",
   discussion: "研究讨论",
-  ideas: "Idea 池",
   experiments: "实验复现",
   "project-environment": "运行环境",
   "paper-detail": "论文详情",
   notes: "研究笔记",
   files: "课题文件",
+  ideas: "实验",
 };
 
 const reasoningEffortChoices: Array<{ value: CodexReasoningEffort; label: string }> = [
@@ -81,7 +82,8 @@ function App() {
   const [environmentSnapshot, setEnvironmentSnapshot] = useState<ProjectEnvironmentSnapshot | null>(null);
   const [experimentIntent, setExperimentIntent] = useState<ExperimentIntent | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
-  const [settings, setSettings] = useState<ModelSettings>({ baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", providerMode: "auto", apiKeyConfigured: false });
+  const [settings, setSettings] = useState<ModelSettings>({});
+  const [llmState, setLlmState] = useState<LlmState | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ideaDraft, setIdeaDraft] = useState<Partial<Idea> | null>(null);
@@ -129,19 +131,8 @@ function App() {
   const papers = activeProject?.papers ?? [];
   const ideas = activeProject?.ideas ?? [];
   const visibleIdeas = useMemo(() => [...ideas].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [ideas]);
-  const codexSdkReady = Boolean(settings.codexSdk?.cliAvailable && (settings.codexSdk.configAvailable || settings.codexSdk.authAvailable));
-  const modelReady = settings.providerMode === "manual"
-    ? Boolean(settings.apiKeyConfigured)
-    : Boolean(codexSdkReady || settings.ccswitch?.routingAvailable || settings.ccswitch?.providerAvailable || settings.apiKeyConfigured);
-  const modelSummary = settings.providerMode === "manual"
-    ? `手动接口 · ${settings.model}`
-    : codexSdkReady
-      ? `Codex SDK · ${settings.ccswitch?.model || "当前模型"}`
-      : settings.ccswitch?.routingAvailable
-        ? `CC Switch · ${settings.ccswitch.model || settings.model}`
-        : settings.ccswitch?.providerAvailable
-          ? `Codex · ${settings.ccswitch.provider || "当前 provider"} · ${settings.ccswitch.model || settings.model}`
-          : `备用接口 · ${settings.model}`;
+  const modelReady = llmState ? selectionReady(llmState, llmState.active, "active") : false;
+  const modelSummary = llmState ? selectionLabel(llmState, llmState.active) : "";
 
   useEffect(() => {
     let mounted = true;
@@ -152,6 +143,8 @@ function App() {
       setWorkspacePath(loaded.workspacePath);
       setSettings(modelSettings);
     }).catch((error) => { if (mounted) setToast(errorMessage(error)); });
+    // 模型状态单独读：会探测 CC Switch，不应拖慢工作区打开。
+    window.autoresearch.getLlmState().then((state) => { if (mounted) setLlmState(state); }).catch((error) => { if (mounted) setToast(errorMessage(error)); });
     return () => { mounted = false; };
   }, []);
 
@@ -499,15 +492,6 @@ function App() {
     finally { endTask(taskKeys.saveIdea); }
   };
 
-  const updateIdeaStatus = async (idea: Idea, status: IdeaStatus, reason = "") => {
-    if (!activeProject) return;
-    try {
-      const projectId = activeProject.id;
-      const saved = await window.autoresearch.updateIdea({ projectId, ideaId: idea.id, status, reason });
-      patchProject(projectId, (project) => ({ ...project, ideas: project.ideas.map((item) => item.id === saved.id ? saved : item), updatedAt: saved.updatedAt }));
-    } catch (error) { setToast(errorMessage(error)); }
-  };
-
   const sendDiscussionMessage = async (input: DiscussionSendInput): Promise<Discussion | null> => {
     if (!activeProject) return null;
     const projectId = activeProject.id;
@@ -566,40 +550,44 @@ function App() {
     setSettingsError("");
     try {
       const saved = await window.autoresearch.saveSettings({
-        providerMode: String(form.get("providerMode")) as "auto" | "manual",
-        baseUrl: String(form.get("baseUrl")),
-        model: String(form.get("model")),
-        apiKey: String(form.get("apiKey")),
         reasoningEffort: (String(form.get("reasoningEffort") || "") || undefined) as CodexReasoningEffort | undefined,
         autoAnalyzeOnImport: form.get("autoAnalyzeOnImport") === "on",
       });
       setSettings((current) => ({ ...current, ...saved }));
       setSettingsOpen(false);
-      setToast("模型设置已保存");
+      setToast("设置已保存");
     } catch (error) { setSettingsError(errorMessage(error)); }
     finally { setSettingsBusy(false); }
   };
 
-  const testSettings = async (formElement: HTMLFormElement) => {
-    const form = new FormData(formElement);
+  const testSettings = async () => {
     setSettingsBusy(true);
     setSettingsError("");
     try {
-      const saved = await window.autoresearch.saveSettings({
-        providerMode: String(form.get("providerMode")) as "auto" | "manual",
-        baseUrl: String(form.get("baseUrl")),
-        model: String(form.get("model")),
-        apiKey: String(form.get("apiKey")),
-        reasoningEffort: (String(form.get("reasoningEffort") || "") || undefined) as CodexReasoningEffort | undefined,
-        autoAnalyzeOnImport: form.get("autoAnalyzeOnImport") === "on",
-      });
-      setSettings((current) => ({ ...current, ...saved }));
-      const refreshed = await window.autoresearch.getSettings();
-      setSettings((current) => ({ ...current, ...refreshed }));
       const result = await window.autoresearch.testSettings(activeProjectId || undefined);
       setSettingsError(`连接正常 · ${result.source}`);
     } catch (error) { setSettingsError(errorMessage(error)); }
     finally { setSettingsBusy(false); }
+  };
+
+  const selectModel = async (slot: "active" | "agent", providerId: string, model: string) => {
+    try {
+      const next = await window.autoresearch.selectLlmModel(slot, providerId, model);
+      setLlmState(next);
+      setToast(`${slot === "active" ? "分析与讨论" : "Agent"}已切换到 ${selectionLabel(next, next[slot])}`);
+    } catch (error) { setToast(errorMessage(error)); throw error; }
+  };
+  const providerActions: ProviderActions = {
+    onSave: async (draft) => { const next = await window.autoresearch.saveLlmProvider(draft); setLlmState(next); return next; },
+    onDelete: async (providerId) => setLlmState(await window.autoresearch.deleteLlmProvider(providerId)),
+    onSelect: async (slot, providerId, model) => setLlmState(await window.autoresearch.selectLlmModel(slot, providerId, model)),
+    onTest: (providerId, model) => window.autoresearch.testLlmModel(providerId, model),
+    onRefresh: async () => setLlmState(await window.autoresearch.getLlmState(true)),
+  };
+  const openSettings = () => {
+    setSettingsError("");
+    setSettingsOpen(true);
+    void window.autoresearch.getLlmState(true).then(setLlmState).catch(() => {});
   };
 
   const chooseWorkspace = async () => {
@@ -675,17 +663,16 @@ function App() {
           <NavItem active={view === "overview"} icon={<FolderOpen size={17} />} label="课题概览" onClick={() => setView("overview")} />
           <NavItem active={["papers", "paper-detail"].includes(view)} icon={<BookOpen size={17} />} label="文献分析" count={papers.length} badge={anyAnalysis(tasks, activeProject.id) || isLiveProgress(latestProgress(activeProject.id)) ? <span className="nav-live"><i />分析中</span> : undefined} onClick={() => setView("papers")} />
           <NavItem active={view === "discussion"} icon={<MessageSquareText size={17} />} label="研究讨论" count={(activeProject.discussions ?? []).length || undefined} onClick={() => setView("discussion")} />
-          <NavItem active={view === "ideas"} icon={<Lightbulb size={17} />} label="Idea 池" count={ideas.length} onClick={() => setView("ideas")} />
           <NavItem active={view === "notes"} icon={<NotebookPen size={17} />} label="研究笔记" count={(activeProject.notes ?? []).length} onClick={() => setView("notes")} />
           <NavItem active={view === "files"} icon={<Files size={17} />} label="课题文件" onClick={() => setView("files")} />
         </nav>
         <div className="side-section-head side-section-head--label"><span>实验</span></div>
         <nav className="nav-list" aria-label="实验">
-          <NavItem active={view === "experiments"} icon={<FlaskConical size={17} />} label="实验复现" badge={experimentBadge} onClick={() => setView("experiments")} />
+          <NavItem active={view === "experiments" || view === "ideas"} icon={<FlaskConical size={17} />} label="实验" badge={experimentBadge} onClick={() => setView("experiments")} />
           <NavItem active={view === "project-environment"} icon={<Leaf size={17} />} label="运行环境" badge={environmentBadge} onClick={() => setView("project-environment")} />
         </nav>
         <div className="side-divider" />
-        <button className="side-folder" title={modelReady ? `当前模型：${modelSummary}` : "模型还没有配置好"} onClick={() => setSettingsOpen(true)}><Settings2 size={16} /><span>模型与数据设置</span><span className={`connection-dot ${modelReady ? "is-on" : ""}`} /></button>
+        <button className="side-folder" title={modelReady ? `当前模型：${modelSummary}` : "模型还没有配置好"} onClick={openSettings}><Settings2 size={16} /><span>模型与数据设置</span><span className={`connection-dot ${modelReady ? "is-on" : ""}`} /></button>
         <button className="side-folder" onClick={openWorkspace} title={workspacePath}><FolderOpen size={16} /><span>打开数据目录</span><ArrowUpRight size={14} /></button>
       </>}
       <div className="sidebar-bottom"><span className="sidebar-version">AUTORESEARCH · {__APP_VERSION__}</span><span className="local-badge"><span />本地工作区</span></div>
@@ -694,7 +681,7 @@ function App() {
     <main className="main-column">
       <header className="topbar">
         <div className="breadcrumbs"><span>{activeProject?.title ?? "研究工作区"}</span>{activeProject && <><ChevronRight size={14} /><strong>{viewTitles[view]}</strong></>}</div>
-        <div className="topbar-actions"><form className="search-wrap" onSubmit={searchWorkspace}><Search size={15} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} aria-label="搜索课题内容" placeholder="搜索文献、Idea、原文" />{searchBusy ? <LoaderCircle size={13} className="spin" /> : <kbd className="search-kbd">Ctrl K</kbd>}</form>
+        <div className="topbar-actions"><ModelSwitcher state={llmState} onSelect={selectModel} onManage={openSettings} /><form className="search-wrap" onSubmit={searchWorkspace}><Search size={15} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} aria-label="搜索课题内容" placeholder="搜索文献、Idea、原文" />{searchBusy ? <LoaderCircle size={13} className="spin" /> : <kbd className="search-kbd">Ctrl K</kbd>}</form>
         </div>
       </header>
 
@@ -752,8 +739,8 @@ function App() {
           onSaveIdea={ideaFromMessage}
           onBuildExperiment={startExperiment}
         />}
-        {view === "ideas" && <IdeaPoolView ideas={visibleIdeas} onEdit={setIdeaDraft} onStatus={updateIdeaStatus} />}
-        {view === "experiments" && <ExperimentView key={activeProject.id} project={activeProject} intent={experimentIntent} />}
+        {view === "ideas" && <ExperimentView key={activeProject.id} project={activeProject} intent={experimentIntent} onIdeasChange={(ideas) => patchProject(activeProject.id, (project) => ({ ...project, ideas }))} />}
+        {view === "experiments" && <ExperimentView key={activeProject.id} project={activeProject} intent={experimentIntent} onIdeasChange={(ideas) => patchProject(activeProject.id, (project) => ({ ...project, ideas }))} />}
         {view === "project-environment" && <ProjectEnvironmentPage key={activeProject.id} project={activeProject} />}
         {view === "notes" && <ResearchNotesView project={activeProject} busy={noteBusy} onSave={saveResearchNote} onUpdate={updateResearchNote} />}
         {view === "files" && <ProjectFilesView
@@ -779,7 +766,7 @@ function App() {
     {searchOpen && <Modal title={`搜索结果 · ${searchQuery}`} onClose={() => setSearchOpen(false)} size="wide"><div className="search-results">{searchResults.length ? searchResults.map((result, index) => <button className="search-result" key={`${result.type}-${result.projectId}-${result.paperId ?? result.ideaId ?? index}-${result.page ?? ""}`} onClick={() => void selectSearchResult(result)}><span className="search-result-icon">{result.type === "evidence" ? <SearchCheck size={15} /> : result.type === "idea" ? <Lightbulb size={15} /> : result.type === "paper" ? <BookOpen size={15} /> : <FolderOpen size={15} />}</span><span className="search-result-copy"><span><strong>{result.title}</strong><small>{result.projectTitle}{result.page ? ` · p. ${result.page}` : ""}</small></span><p>{result.excerpt}</p></span><ArrowUpRight size={14} /></button>) : <div className="search-no-results">没有匹配结果</div>}</div></Modal>}
     {editingProject && activeProject && <Modal title="编辑课题" onClose={() => setEditingProject(false)}><form className="form-stack" onSubmit={saveProject}><label>课题名称<input name="title" defaultValue={activeProject.title} maxLength={100} required /></label><label>研究方向<textarea name="direction" defaultValue={activeProject.direction} rows={6} maxLength={5000} /></label><div className="modal-actions"><button type="button" className="button" onClick={() => setEditingProject(false)}>取消</button><button className="button button--primary" disabled={tasks.has(taskKeys.saveProject)}><Check size={15} />保存更改</button></div></form></Modal>}
     {ideaDraft && <IdeaModal idea={ideaDraft} onClose={() => setIdeaDraft(null)} onSubmit={saveIdea} busy={tasks.has(taskKeys.saveIdea)} />}
-    {settingsOpen && <SettingsModal settings={settings} workspacePath={workspacePath} onChooseWorkspace={chooseWorkspace} workspaceBusy={workspaceBusy} onClose={() => setSettingsOpen(false)} onSave={saveSettings} onTest={testSettings} busy={settingsBusy} status={settingsError} />}
+    {settingsOpen && <SettingsModal settings={settings} llmState={llmState} providerActions={providerActions} workspacePath={workspacePath} onChooseWorkspace={chooseWorkspace} workspaceBusy={workspaceBusy} onClose={() => setSettingsOpen(false)} onSave={saveSettings} onTest={testSettings} busy={settingsBusy} status={settingsError} />}
     {pdfRequest && activeProject && <Suspense fallback={<div className="pdf-viewer-backdrop"><div className="pdf-loading"><LoaderCircle className="spin" size={18} />正在打开原文</div></div>}><PdfCitationViewer projectId={activeProject.id} paper={pdfRequest.paper} page={pdfRequest.page} quote={pdfRequest.quote} onClose={() => setPdfRequest(null)} /></Suspense>}
     {toast && <div className="toast" role="status"><span>{toast}</span><IconButton label="关闭通知" onClick={() => setToast("")}><X size={14} /></IconButton></div>}
   </div>;
@@ -793,32 +780,22 @@ function WelcomeState({ onCreate }: { onCreate: () => void }) {
   return <div className="welcome-state"><div className="welcome-mark"><BookOpen size={26} /></div><span className="eyebrow">AUTORESEARCH WORKSPACE</span><h1>建立一个研究课题</h1><button className="button button--primary" onClick={onCreate}><FolderPlus size={16} />新建课题</button></div>;
 }
 
-function SettingsModal({ settings, workspacePath, onChooseWorkspace, workspaceBusy, onClose, onSave, onTest, busy, status }: { settings: ModelSettings; workspacePath: string; onChooseWorkspace: () => void; workspaceBusy: boolean; onClose: () => void; onSave: (event: FormEvent<HTMLFormElement>) => void; onTest: (form: HTMLFormElement) => void; busy: boolean; status: string }) {
-  const [providerMode, setProviderMode] = useState<"auto" | "manual">(settings.providerMode ?? "auto");
+function SettingsModal({ settings, llmState, providerActions, workspacePath, onChooseWorkspace, workspaceBusy, onClose, onSave, onTest, busy, status }: { settings: ModelSettings; llmState: LlmState | null; providerActions: ProviderActions; workspacePath: string; onChooseWorkspace: () => void; workspaceBusy: boolean; onClose: () => void; onSave: (event: FormEvent<HTMLFormElement>) => void; onTest: () => void; busy: boolean; status: string }) {
   const [autoAnalyzeOnImport, setAutoAnalyzeOnImport] = useState(settings.autoAnalyzeOnImport !== false);
   const [reasoningEffort, setReasoningEffort] = useState(settings.reasoningEffort ?? "");
-  const codexSdkReady = Boolean(settings.codexSdk?.cliAvailable && (settings.codexSdk.configAvailable || settings.codexSdk.authAvailable));
-  const ccswitchReady = Boolean(codexSdkReady || settings.ccswitch?.routingAvailable || settings.ccswitch?.providerAvailable);
-  const routeText = codexSdkReady
-    ? `已检测到 Codex CLI，将使用官方 SDK · ${settings.ccswitch?.model || "当前模型"}`
-    : settings.codexSdk?.cliAvailable
-      ? "已找到 Codex CLI，但尚未发现 Codex 配置或认证；请先登录 Codex 或配置 CC Switch。"
-      : settings.ccswitch?.error
-    ? settings.ccswitch.error
-    : settings.ccswitch?.routingAvailable
-      ? `Routing 正在运行 · ${settings.ccswitch?.model || "Codex 当前模型"}`
-      : settings.ccswitch?.providerAvailable
-        ? `当前 Codex provider「${settings.ccswitch.provider}」已配置，将直接使用 ${settings.ccswitch.model || "当前模型"}`
-        : settings.ccswitch?.providerReason || settings.ccswitch?.routingReason || "未检测到可用的 Codex provider，将使用手动备用接口";
-  return <Modal title="模型与数据设置" onClose={onClose} size="wide"><form className="form-stack settings-form" onSubmit={onSave}>
-    <section className="settings-section"><div className="settings-section-title"><FolderOpen size={15} /><strong>研究数据目录</strong></div><div className="workspace-path-control"><div className="workspace-path" title={workspacePath}>{workspacePath}</div><button type="button" className="button button--small" disabled={workspaceBusy} onClick={onChooseWorkspace}>{workspaceBusy ? <LoaderCircle className="spin" size={14} /> : <FolderOpen size={14} />}选择目录</button></div><p className="settings-help">切换后会打开所选目录中的课题；原目录的数据会保留，不会自动搬移。</p></section>
-    <section className="settings-section"><label className="settings-toggle"><input type="checkbox" name="autoAnalyzeOnImport" checked={autoAnalyzeOnImport} onChange={(event) => setAutoAnalyzeOnImport(event.target.checked)} /><span><strong>导入 PDF 后自动分析</strong><small>解析成功的论文会自动生成带读讲解稿和核对材料；关闭后可在文献列表手动启动。</small></span></label></section>
-    <section className="settings-section"><div className="settings-section-title"><Sparkles size={15} /><strong>模型来源</strong></div><input type="hidden" name="providerMode" value={providerMode} /><div className="settings-mode-switch" role="group" aria-label="模型来源"><button type="button" className={providerMode === "auto" ? "is-active" : ""} aria-pressed={providerMode === "auto"} onClick={() => setProviderMode("auto")}>自动使用当前 Codex</button><button type="button" className={providerMode === "manual" ? "is-active" : ""} aria-pressed={providerMode === "manual"} onClick={() => setProviderMode("manual")}>手动兼容接口</button></div>{providerMode === "auto" && <div className={`ccswitch-status ${ccswitchReady ? "is-ready" : ""}`}><span className={`connection-dot ${ccswitchReady ? "is-on" : ""}`} /><span>{routeText}</span></div>}<p className="settings-help">自动模式优先使用本机 Codex CLI；CLI 不可用或连接失败时，依次尝试 CC Switch Routing、当前 Codex provider 和手动备用接口。论文分析和研究讨论只调用模型；论文页 Codex 和实验复现可以读写数据目录、联网，遇到需要你决定的事会先弹出问题。</p>
-    </section>
-    <section className="settings-section"><div className="settings-section-title"><Sparkles size={15} /><strong>思考强度</strong></div><label className="effort-setting" htmlFor="reasoning-effort"><span><small>设定 AutoResearch 请求的分析强度；可用档位取决于当前模型。</small></span><select id="reasoning-effort" name="reasoningEffort" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)}><option value="">沿用模型默认值</option>{reasoningEffortChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></label><p className="settings-help">较高强度通常需要更多等待时间和 token。选择后点击“保存”生效。</p></section>
-    <details className="manual-settings" open={providerMode === "manual"}><summary>手动兼容接口与备用配置</summary><div className="form-stack"><label>兼容接口地址<input name="baseUrl" defaultValue={settings.baseUrl} placeholder="https://api.openai.com/v1" required /></label><label>模型名称<input name="model" defaultValue={settings.model} placeholder="gpt-4.1-mini" required /></label><label>API 密钥<input name="apiKey" type="password" autoComplete="new-password" placeholder={settings.apiKeyConfigured ? "已保存，留空保持不变" : "sk-..."} /></label><div className="secure-note"><Archive size={15} /><span>密钥使用 Windows 系统凭据加密后保存在本机，不会发送给 CC Switch。</span></div></div></details>
-    {status && <div className={`settings-status ${status.startsWith("连接正常") ? "is-success" : ""}`}>{status}</div>}<div className="modal-actions modal-actions--split"><button type="button" className="button" disabled={busy} onClick={(event) => { const form = event.currentTarget.form; if (form) onTest(form); }}>{busy ? <LoaderCircle className="spin" size={15} /> : <CircleAlert size={15} />}测试连接</button><div><button type="button" className="button" onClick={onClose}>取消</button><button className="button button--primary" disabled={busy}><Check size={15} />保存</button></div></div>
-  </form></Modal>;
+  return <Modal title="模型与数据设置" onClose={onClose} size="settings"><div className="form-stack settings-form">
+    {llmState ? <ProviderSettings state={llmState} {...providerActions} /> : <div className="settings-section"><span className="secure-note"><LoaderCircle className="spin" size={14} />正在读取模型服务商</span></div>}
+    {llmState && <section className="settings-section"><div className="settings-section-title"><Sparkles size={15} /><strong>当前使用</strong></div>
+      <p className="settings-help">分析与讨论：<strong>{selectionLabel(llmState, llmState.active)}</strong>　·　Agent：<strong>{selectionLabel(llmState, llmState.agent)}</strong>。在顶栏右上角切换。论文分析和研究讨论只调用模型；论文页 Codex 和实验复现可以读写数据目录、联网，遇到需要你决定的事会先弹出问题。</p>
+      <div className="modal-actions modal-actions--split"><button type="button" className="button button--small" disabled={busy} onClick={onTest}>{busy ? <LoaderCircle className="spin" size={14} /> : <CircleAlert size={14} />}测试分析与讨论模型</button>{status && <span className={`settings-status ${status.startsWith("连接正常") ? "is-success" : ""}`}>{status}</span>}</div>
+    </section>}
+    <form className="form-stack" onSubmit={onSave}>
+      <section className="settings-section"><div className="settings-section-title"><FolderOpen size={15} /><strong>研究数据目录</strong></div><div className="workspace-path-control"><div className="workspace-path" title={workspacePath}>{workspacePath}</div><button type="button" className="button button--small" disabled={workspaceBusy} onClick={onChooseWorkspace}>{workspaceBusy ? <LoaderCircle className="spin" size={14} /> : <FolderOpen size={14} />}选择目录</button></div><p className="settings-help">切换后会打开所选目录中的课题；原目录的数据会保留，不会自动搬移。</p></section>
+      <section className="settings-section"><label className="settings-toggle"><input type="checkbox" name="autoAnalyzeOnImport" checked={autoAnalyzeOnImport} onChange={(event) => setAutoAnalyzeOnImport(event.target.checked)} /><span><strong>导入 PDF 后自动分析</strong><small>解析成功的论文会自动生成带读讲解稿和核对材料；关闭后可在文献列表手动启动。</small></span></label></section>
+      <section className="settings-section"><div className="settings-section-title"><Sparkles size={15} /><strong>思考强度</strong></div><label className="effort-setting" htmlFor="reasoning-effort"><span><small>设定 AutoResearch 请求的分析强度；可用档位取决于当前模型。直接调用接口时，高于 high 的档位按 high 发送。</small></span><select id="reasoning-effort" name="reasoningEffort" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)}><option value="">沿用模型默认值</option>{reasoningEffortChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></label></section>
+      <div className="modal-actions"><button type="button" className="button" onClick={onClose}>关闭</button><button className="button button--primary" disabled={busy}><Check size={15} />保存这些设置</button></div>
+    </form>
+  </div></Modal>;
 }
 
 export default App;
