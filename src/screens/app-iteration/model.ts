@@ -1,5 +1,5 @@
 export type IterationStatus = "draft" | "spec" | "implementing" | "verifying" | "review" | "approved" | "merging" | "merged" | "abandoned" | "anomaly";
-export type IterationAction = "create" | "settings" | "sync" | "draft" | "confirm" | "implement" | "validate" | "approve" | "merge" | "abandon" | "preview" | "stopPreview" | "stop" | "feedback" | "revert" | "update" | "restore" | "decideAgentApproval" | "trial";
+export type IterationAction = "create" | "settings" | "sync" | "draft" | "confirm" | "implement" | "validate" | "approve" | "merge" | "abandon" | "preview" | "stopPreview" | "stop" | "feedback" | "revert" | "update" | "restore" | "decideAgentApproval" | "trial" | "workspaceScan" | "workspacePrepare" | "workspaceApprove" | "workspacePublish" | "workspaceAbandon" | "workspaceCleanup";
 export interface IterationVerification {
   id: number;
   sha: string;
@@ -58,6 +58,31 @@ export interface IterationSnapshot {
   stream: { taskId: string; text: string } | null;
   active: IterationAction | null;
   preview: { id: string; sha: string } | null;
+  organizer: IterationWorkspaceCandidate | null;
+}
+export interface IterationWorkspaceFile {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  eligible: boolean;
+  reason: string | null;
+  size: number;
+  fingerprint: string | null;
+}
+export interface IterationWorkspaceCandidate {
+  id: string;
+  status: "scanned" | "preparing" | "validating" | "tested" | "failed" | "publishing" | "pushed" | "published" | "abandoned";
+  title: string;
+  repository: string;
+  branch?: string;
+  sha?: string;
+  prUrl?: string;
+  error?: string | null;
+  currentStep?: string | null;
+  cleanedAt?: string;
+  approval?: { sha: string; files: string[]; at: string };
+  selected: string[];
+  inventory: { baseSha: string; scannedAt: string; policy: string; files: IterationWorkspaceFile[] };
+  steps: { name: string; command: string; durationMs: number; exitCode: number | null; logFile: string }[];
 }
 import type { ChatAttachment } from "../../types";
 

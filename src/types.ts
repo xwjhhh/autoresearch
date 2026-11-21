@@ -545,6 +545,9 @@ export interface DesktopBridge {
   iterationDiff(id: string): Promise<{ sha: string | null; files: string[] }>;
   iterationPatch(id: string, file: string): Promise<{ text: string; truncated: boolean }>;
   iterationArtifact(id: string, verifyId: number, kind: "log" | "screenshot", file: string): Promise<string>;
+  iterationWorkspaceDiff(): Promise<{ sha: string | null; files: string[] }>;
+  iterationWorkspacePatch(file: string): Promise<{ text: string; truncated: boolean }>;
+  iterationWorkspaceLog(file: string): Promise<string>;
   listExperiments(projectId: string): Promise<ExperimentSummary[]>;
   getExperiment(projectId: string, experimentId: string): Promise<ExperimentSnapshot>;
   createExperiment(projectId: string, input:

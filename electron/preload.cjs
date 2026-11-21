@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld("autoresearch", {
   iterationDiff: (id) => invoke("iteration:diff", { id }),
   iterationPatch: (id, file) => invoke("iteration:patch", { id, file }),
   iterationArtifact: (id, verifyId, kind, file) => invoke("iteration:artifact", { id, verifyId, kind, file }),
+  iterationWorkspaceDiff: () => invoke("iteration:workspace-diff"),
+  iterationWorkspacePatch: (file) => invoke("iteration:workspace-patch", { file }),
+  iterationWorkspaceLog: (file) => invoke("iteration:workspace-log", { file }),
   // 实验复现
   listExperiments: (projectId) => invoke("experiment:list", { projectId }),
   getExperiment: (projectId, experimentId) => invoke("experiment:get", { projectId, experimentId }),
