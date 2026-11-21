@@ -3,6 +3,7 @@ import { ArrowUpRight, FolderGit2, GitBranch, GitPullRequest, LoaderCircle, Plus
 import { ChatAttachments, ChatComposer } from "../../components/ChatComposer";
 import type { ChatAttachment } from "../../types";
 import type { IterationAction, IterationSnapshot, IterationStatus, IterationTask } from "./model";
+import { WorkspaceOrganizer } from "./WorkspaceOrganizer";
 import "./screen.css";
 
 const states: Record<IterationStatus, string> = {
@@ -108,6 +109,7 @@ export function AppIterationView() {
   const [tab, setTab] = useState<(typeof tabs)[number]>("对话");
   const [creating, setCreating] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [organizerOpen, setOrganizerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -168,6 +170,10 @@ export function AppIterationView() {
     void execute(() => api.iterationAction(name, { id: task?.id, sha: task?.sha, ...extra }), onSuccess);
   }
 
+  function organizerAction(name: IterationAction, extra: Record<string, unknown> = {}) {
+    void execute(() => api.iterationAction(name, extra));
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -199,7 +205,7 @@ export function AppIterationView() {
   return <section className="iter-page" aria-label="应用迭代工作区">
     <div className="iter-header">
       <div><div className="iter-heading"><GitPullRequest size={23} /><h1>自身</h1></div><p>提出改进，审阅候选代码与验证结果，再决定是否合并。</p></div>
-      <button type="button" className="iter-button" aria-expanded={settings} onClick={() => setSettings(!settings)}><Settings2 size={16} />迭代设置</button>
+      <div className="iter-row"><button type="button" className={`iter-button ${organizerOpen ? "iter-primary" : ""}`} aria-pressed={organizerOpen} disabled={!repo} onClick={() => setOrganizerOpen(!organizerOpen)}><FolderGit2 size={15} />{organizerOpen ? "返回任务" : "整理当前工作区"}</button><button type="button" className="iter-button" aria-expanded={settings} onClick={() => setSettings(!settings)}><Settings2 size={16} />迭代设置</button></div>
     </div>
     <div className="iter-repo">
       <div className="iter-row"><FolderGit2 size={17} /><strong>{repo?.repository || "尚未绑定源码仓库"}</strong>{repo && <code>{repo.main}</code>}</div>
@@ -222,7 +228,7 @@ export function AppIterationView() {
     </div>}
     {(error || repo?.error || data?.updateError) && <div className="iter-alert" role="alert">{error || repo?.error || data?.updateError}</div>}
     {data?.updatePending && <p className="iter-muted">正在重新安装依赖并构建。更新完成后会重启 AutoResearch。</p>}
-    <div className="iter-layout">
+    {organizerOpen ? <WorkspaceOrganizer candidate={data?.organizer ?? null} repository={repo?.repository ?? null} activeAction={data?.active ?? null} locked={locked} onAction={organizerAction} /> : <div className="iter-layout">
       <aside className="iter-rail" aria-label="迭代任务列表">
         <div className="iter-row iter-rail-heading"><strong>任务</strong><button type="button" className="iter-button" disabled={!repo || locked || !canCreate} onClick={() => setCreating(true)}><Plus size={15} />新建</button></div>
         {data?.tasks.map((item) => <button className={`iter-task ${task?.id === item.id && !creating ? "is-selected" : ""}`} key={item.id} type="button" onClick={() => { setSelected(item.id); setCreating(false); setTab("对话"); if (task?.id !== item.id) clearFeedback(); setAbandoning(false); }}><strong>{item.title}</strong><small>{item.number ? `#${item.number} · ` : ""}{states[item.status]}</small></button>)}
@@ -288,6 +294,6 @@ export function AppIterationView() {
           </footer>
         </> : <div className="iter-empty"><GitPullRequest size={30} /><h2>{repo ? "开始一次应用迭代" : "绑定源码仓库以开始"}</h2><p>{repo ? "新建任务，描述你希望改进的功能和完成标准。" : "任务、候选改动与合并记录会关联到同一个 GitHub 仓库。"}</p></div>}
       </div>
-    </div>
+    </div>}
   </section>;
 }

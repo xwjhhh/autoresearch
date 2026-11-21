@@ -1833,6 +1833,9 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle("iteration:diff", (_event, { id }) => iterationService().diff(id));
     ipcMain.handle("iteration:patch", (_event, { id, file }) => iterationService().patch(id, file));
     ipcMain.handle("iteration:artifact", (_event, { id, verifyId, kind, file }) => iterationService().artifact(id, verifyId, kind, file));
+    ipcMain.handle("iteration:workspace-diff", () => iterationService().organizerDiff());
+    ipcMain.handle("iteration:workspace-patch", (_event, { file }) => iterationService().organizerPatch(file));
+    ipcMain.handle("iteration:workspace-log", (_event, { file }) => iterationService().organizerLog(file));
     registerHandlers();
     const workspace = await workspaceLoad();
     if (!launch.preview) {

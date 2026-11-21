@@ -138,6 +138,40 @@ test("GitHub 地址解析同时支持 HTTPS 和 SSH", () => {
   assert.equal(githubRepository("https://github.com.other.test/org/app.git"), null);
 });
 
+test("整理候选必须审阅并批准当前差异，发布只创建 PR", async (context) => {
+  const harness = await setup(context);
+  await mkdir(join(harness.source, "electron"));
+  await writeFile(join(harness.source, "electron", "app.mjs"), "export const ready = true;\n");
+  const originalChanges = await git(harness.source, "status", "--porcelain");
+  await harness.service.perform("workspaceScan");
+  const scanned = (await harness.service.snapshot()).organizer;
+  assert.equal(scanned.inventory.files.find((file) => file.path === "electron/app.mjs").eligible, true);
+  await assert.rejects(harness.service.perform("workspacePublish"), /批准当前这一份候选差异/);
+  const validationNames = ["安装依赖", "单元测试", "构建"];
+  harness.service.validateWorkspace = async ({ onStep }) => {
+    const steps = validationNames.map((name, index) => ({ name, command: `npm ${name}`, durationMs: 1, exitCode: 0, logFile: `${String(index + 1).padStart(2, "0")}.log` }));
+    for (const step of steps) {
+      await onStep({ ...step, started: true });
+      await onStep({ ...step, started: false });
+    }
+    return { result: "success", steps };
+  };
+  await harness.service.perform("workspacePrepare", { files: ["electron/app.mjs"] });
+  const candidate = (await harness.service.snapshot()).organizer;
+  assert.equal(candidate.status, "tested");
+  const hub = harness.config.github();
+  hub.pull = async () => ({ number: 31, html_url: "https://github.com/test/app/pull/31" });
+  await assert.rejects(harness.service.perform("workspaceApprove", { sha: "f".repeat(40), reviewed: true }), /审阅并批准/);
+  await harness.service.perform("workspaceApprove", { sha: candidate.sha, reviewed: true });
+  const published = (await harness.service.snapshot()).organizer;
+  assert.equal(published.status, "published");
+  assert.equal(published.approval.sha, published.sha);
+  assert.equal(published.prUrl, "https://github.com/test/app/pull/31");
+  assert.equal(await git(harness.source, "status", "--porcelain"), originalChanges);
+  assert.deepEqual((await git(harness.source, "diff", "--name-only", scanned.inventory.baseSha, published.sha)).split(/\r?\n/).filter(Boolean), ["electron/app.mjs"]);
+  assert.equal(harness.history.some(([event]) => event === "squash"), false);
+});
+
 test("迭代运行时隔离线程，审批仅属于当前任务且只能应答一次", async (context) => {
   const harness = await setup(context);
   await harness.action("create", proposal);

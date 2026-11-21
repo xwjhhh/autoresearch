@@ -5,6 +5,7 @@ test("可打开应用迭代工作区和仓库设置", async ({ desktop }, info) 
   expect(await desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(false);
   await desktop.page.getByRole("button", { name: "应用迭代", exact: true }).click();
   await expect(desktop.page.getByRole("heading", { name: "自身", exact: true })).toBeVisible();
+  await expect(desktop.page.getByRole("button", { name: "整理当前工作区" })).toBeDisabled();
   await expect(desktop.page.getByRole("button", { name: "选择源码仓库" })).toBeVisible();
   await expect(desktop.page.getByRole("button", { name: "新建", exact: true })).toBeDisabled();
   await desktop.page.getByRole("button", { name: "迭代设置" }).click();
@@ -19,6 +20,22 @@ test("可打开应用迭代工作区和仓库设置", async ({ desktop }, info) 
   await desktop.page.getByRole("region", { name: "应用迭代工作区" }).getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(() => desktop.page.evaluate(async () => (await window.autoresearch.iterationSnapshot()).runtime)).toBe("sdk");
   await expect.poll(() => desktop.page.evaluate(async () => (await window.autoresearch.iterationSnapshot()).access)).toBe("restricted");
+});
+
+test("绑定仓库后可进入受控工作区整理页面", async ({}, info) => {
+  const desktop = await launchFixture(info, { iterationState: {
+    binding: { path: process.cwd(), repository: "example/test", remote: "origin", main: "main", https: true },
+    tasks: [], retryLimit: 5,
+  } });
+  try {
+    await desktop.page.getByRole("button", { name: "应用迭代", exact: true }).click();
+    const button = desktop.page.getByRole("button", { name: "整理当前工作区" });
+    await expect(button).toBeEnabled();
+    await button.click();
+    await expect(desktop.page.getByRole("heading", { name: "整理当前工作区", exact: true })).toBeVisible();
+    await expect(desktop.page.getByRole("button", { name: "盘点当前工作区" })).toBeEnabled();
+    await expect(desktop.page.getByText(/不是操作系统级沙箱/)).toBeVisible();
+  } finally { await desktop.app.close(); }
 });
 
 test("示例课题包含两篇论文和失败的复现任务", async ({ desktop }, info) => {
