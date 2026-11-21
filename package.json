@@ -1,6 +1,6 @@
 {
   "name": "autoresearch-desktop",
-  "version": "0.7.1",
+  "version": "0.8.3",
   "description": "Local-first research workspace with literature discussion and idea review",
   "author": "AutoResearch",
   "private": true,
@@ -9,7 +9,9 @@
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "start": "electron .",
-    "test": "node --test electron/*.test.mjs scripts/*.test.mjs",
+    "test": "node scripts/test-unit.mjs",
+    "test:codex-protocol": "node scripts/check-codex-app-server.mjs",
+    "test:e2e": "node node_modules/playwright/cli.js test",
     "archive:version": "node scripts/archive-version.mjs",
     "dist:win": "node scripts/archive-version.mjs --check && npm run build && electron-builder --win nsis --publish never && npm run archive:version",
     "dist:win:replace": "node scripts/archive-version.mjs --check --replace-existing && npm run build && electron-builder --win nsis --publish never && npm run archive:version -- --replace-existing"
@@ -29,6 +31,7 @@
     "concurrently": "^9.1.2",
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
+    "playwright": "^1.65.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "wait-on": "^8.0.1"

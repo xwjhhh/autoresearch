@@ -1,0 +1,39 @@
+.ar-chat-compose { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; padding: 10px 12px 8px; border: 1px solid #d5ded9; border-radius: 15px; background: #fff; box-shadow: 0 2px 8px #163d2c0b; }
+.ar-chat-compose:focus-within { border-color: #83a697; }
+.ar-chat-compose.is-dragging { border-color: #39816b; background: #f0faf5; }
+.ar-chat-compose textarea { display: block; box-sizing: border-box; width: 100%; min-height: 44px; max-height: 180px; padding: 2px 1px; border: 0; outline: none; background: transparent; color: #23332d; font: inherit; font-size: 14px; line-height: 1.55; resize: none; }
+.ar-chat-compose textarea::placeholder { color: #677e75; }
+.ar-chat-compose textarea:focus-visible { outline: none; }
+.ar-chat-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ar-chat-status { flex: 1; min-width: 0; color: #52695f; font-size: 12px; overflow-wrap: anywhere; }
+.ar-chat-status[role="alert"] { color: #a33320; }
+.ar-chat-icon { display: inline-grid; flex: 0 0 auto; place-items: center; width: 33px; height: 33px; padding: 0; border: 0; border-radius: 50%; color: #285445; background: #eaf3ee; cursor: pointer; }
+.ar-chat-icon:hover:not(:disabled) { background: #dcebe2; }
+.ar-chat-icon:disabled { opacity: .45; cursor: default; }
+.ar-chat-send, .ar-chat-send:hover:not(:disabled) { color: #fff; background: #245b49; }
+.ar-chat-send:hover:not(:disabled) { background: #164735; }
+.ar-chat-add { position: relative; }
+.ar-chat-add-menu { position: absolute; z-index: 18; bottom: calc(100% + 8px); left: 0; display: grid; gap: 3px; width: 194px; padding: 6px; border: 1px solid #d5ded9; border-radius: 12px; background: #fff; box-shadow: 0 8px 24px #183d2e25; }
+.ar-chat-add-menu button { display: flex; align-items: center; gap: 9px; padding: 8px; text-align: left; color: #263e34; font: inherit; font-size: 13px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
+.ar-chat-add-menu button:is(:hover, :focus-visible) { background: #ebf3ee; }
+.ar-chat-add-menu small { padding: 3px 8px; color: #5b7166; font-size: 11px; }
+.ar-chat-files { display: flex; align-items: flex-start; gap: 7px; flex-wrap: wrap; min-width: 0; margin: 4px 0; }
+.ar-chat-compose > .ar-chat-files { max-height: 185px; overflow-y: auto; }
+.ar-chat-file { position: relative; min-width: 0; max-width: min(100%, 220px); border: 1px solid #d8e2dc; border-radius: 10px; background: #f7faf8; }
+.ar-chat-file-main { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 43px; padding: 5px 9px; border: 0; border-radius: 9px; background: transparent; color: #263c32; font: inherit; text-align: left; cursor: pointer; }
+.ar-chat-file-main:hover { background: #edf4ef; }
+.ar-chat-file:has(.ar-chat-file-remove) .ar-chat-file-main { padding-right: 29px; }
+.ar-chat-file-icon { display: grid; place-items: center; flex: 0 0 28px; height: 28px; background: #e1efe6; color: #31614f; border-radius: 7px; }
+.ar-chat-file-label { display: grid; min-width: 0; gap: 1px; font-size: 12px; text-align: left; }
+.ar-chat-file-label strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: inherit; }
+.ar-chat-file-label small { color: #536f61; font-size: 10px; }
+.ar-chat-file--image .ar-chat-file-main { display: grid; width: 102px; gap: 4px; padding: 4px; }
+.ar-chat-file--image:has(.ar-chat-file-remove) .ar-chat-file-main { padding-right: 4px; }
+.ar-chat-file--image .ar-chat-file-main img { display: block; width: 92px; height: 66px; object-fit: cover; border-radius: 6px; }
+.ar-chat-file--image .ar-chat-file-label { padding: 0 3px; }
+.ar-chat-file-remove { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid #d6e2da; border-radius: 50%; background: #fff; color: #375b4c; cursor: pointer; }
+.ar-chat-file-remove:hover { background: #e5eee7; }
+.ar-chat-image-dialog { max-width: 90vw; max-height: 90vh; border: 1px solid #d5ded9; border-radius: 15px; padding: 12px; background: #fff; color: #263e34; }
+.ar-chat-image-dialog::backdrop { background: #10261ccc; }
+.ar-chat-image-dialog > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.ar-chat-image-dialog > img { display: block; max-width: 84vw; max-height: 75vh; object-fit: contain; }

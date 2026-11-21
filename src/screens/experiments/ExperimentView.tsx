@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ChevronRight, CircleAlert, FileText, Folder, FolderOpen, Lightbulb, LoaderCircle, Pencil, Play, Plus, RefreshCw, Send, Sparkles, Square, Terminal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ChevronRight, CircleAlert, FileText, Folder, FolderOpen, Lightbulb, LoaderCircle, Pencil, Play, Plus, RefreshCw, Sparkles, Square, Terminal } from "lucide-react";
+import { ChatAttachments, ChatComposer } from "../../components/ChatComposer";
+import type { ChatAttachment } from "../../types";
 import type { DesktopBridge, Experiment, ExperimentConversation, ExperimentEvent, Idea, IdeaStatus, ExperimentFileNode, ExperimentJob, ExperimentJobStatus, ExperimentSettings, ExperimentSnapshot, ExperimentSummary, ExperimentUpdate, Paper, Project } from "../../types";
 import { Modal } from "../../components/Shared";
 import { Markdown } from "../../components/markdown.jsx";
@@ -310,9 +312,9 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
     setActiveConversationByExperiment((current) => ({ ...current, [experiment.id]: created.id }));
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, attachmentIds: string[]) => {
     if (!experiment || !activeConversation) return false;
-    const next = await act("send", () => api.sendExperimentMessage(project.id, experiment.id, activeConversation.id, text));
+    const next = await act("send", () => api.sendExperimentMessage(project.id, experiment.id, activeConversation.id, text, attachmentIds));
     if (next) update(experiment.id, { experiment: next });
     return Boolean(next);
   };
@@ -422,7 +424,7 @@ export function ExperimentView({ project, api = window.autoresearch, intent = nu
             setTerminalTab("agent");
           }} onCreate={createConversation} busy={busy === "conversation-create"} />
           {activeConversation && <Conversation key={`conversation:${activeConversation.id}`} snapshot={snapshot} conversation={activeConversation} busyKey={busy} onJobAction={jobAction} onFocusJob={focusJob} />}
-          {activeConversation && <Composer key={`composer:${activeConversation.id}`} conversation={activeConversation} pending={conversationPending} running={conversationRunning} busy={busy === "send" || busy === "stop"} onSend={send} onStop={() => void act("stop", () => api.stopExperiment(project.id, snapshot.experiment.id, activeConversation.id))} />}
+          {activeConversation && <Composer key={`composer:${activeConversation.id}`} api={api} conversation={activeConversation} pending={conversationPending} running={conversationRunning} busy={busy === "send" || busy === "stop"} onSend={send} onStop={() => void act("stop", () => api.stopExperiment(project.id, snapshot.experiment.id, activeConversation.id))} />}
         </>}
     </section>
 
@@ -549,7 +551,7 @@ function Conversation({ snapshot, conversation, busyKey, onJobAction, onFocusJob
         const { event } = block;
         if (event.type === "user") return <article key={event.id} className="exp-msg exp-msg--user">
           <header><strong>你</strong><time>{clock(event.at)}</time></header>
-          <div className="exp-bubble">{event.text}</div>
+          <div className="exp-bubble"><ChatAttachments files={event.attachments} />{event.text}</div>
         </article>;
         if (event.type === "agent") return <article key={event.id} className="exp-msg exp-msg--agent">
           <header><span className="exp-agent-mark" aria-hidden="true"><Sparkles size={11} /></span><strong>Agent</strong><time>{clock(event.at)}</time></header>
@@ -650,47 +652,29 @@ function JobCard({ job, busy, onAction, onShowLog }: { job: ExperimentJob; busy:
   </section>;
 }
 
-function Composer({ conversation, pending, running, busy, onSend, onStop }: { conversation: ExperimentConversation; pending: number; running: number; busy: boolean; onSend: (text: string) => Promise<boolean>; onStop: () => void }) {
+function Composer({ api, conversation, pending, running, busy, onSend, onStop }: { api: DesktopBridge; conversation: ExperimentConversation; pending: number; running: number; busy: boolean; onSend: (text: string, attachmentIds: string[]) => Promise<boolean>; onStop: () => void }) {
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const working = conversation.agent === "working";
   const waitingForAnswer = Boolean(conversation.pendingQuestion);
-  const textarea = useRef<HTMLTextAreaElement>(null);
-  const wasWorking = useRef(working);
-  useEffect(() => {
-    if (wasWorking.current && !working) textarea.current?.focus();
-    wasWorking.current = working;
-  }, [working]);
-  const submit = async (event?: FormEvent) => {
-    event?.preventDefault();
+  const submit = async () => {
     const value = text.trim();
-    if (!value || working || waitingForAnswer || busy) return;
-    if (await onSend(value)) setText("");
-  };
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      void submit();
-    }
+    if ((!value && !attachments.length) || working || waitingForAnswer || busy) return;
+    if (await onSend(value, attachments.map(({ id }) => id))) { setText(""); setAttachments([]); }
   };
   const status = waitingForAnswer ? "请先回答上方的问题"
     : working ? "agent 正在工作，可以随时停止"
     : pending ? `有 ${pending} 个后台任务等你确认`
     : running ? `${running} 个后台任务运行中，结束后会自动唤醒 agent`
     : conversation.error ? `上一轮出错：${conversation.error}`
-    : "Ctrl + Enter 发送";
-  return <form className="exp-composer" onSubmit={submit}>
+    : "Enter 发送 · Shift + Enter 换行";
+  return <div className="exp-composer">
     <div className="exp-composer-inner">
-      <label htmlFor="exp-message">给当前会话发消息</label>
-      <textarea ref={textarea} id="exp-message" value={text} rows={3} maxLength={8000} disabled={waitingForAnswer} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown}
-        placeholder={waitingForAnswer ? "请先回答 agent 的问题" : working ? "agent 正在工作。可以先写好，等这一轮结束再发" : "例如：消融实验只跑一个 seed 就行"} />
-      <div className="exp-composer-row">
-        <span className={`exp-composer-status ${conversation.error && !working ? "is-error" : ""}`}>{status}</span>
-        {working
-          ? <button type="button" className="button" disabled={busy} onClick={onStop}><Square size={11} />停止</button>
-        : <button type="submit" className="button button--primary" disabled={!text.trim() || waitingForAnswer || busy}>{busy ? <LoaderCircle className="spin" size={13} /> : <Send size={13} />}发送</button>}
-      </div>
+      <ChatComposer label="给当前会话发消息" placeholder={waitingForAnswer ? "请先回答 agent 的问题" : "说明下一步，或附上实验资料"} value={text} onChange={setText}
+        files={attachments} setFiles={setAttachments} api={api} status={status} disabled={waitingForAnswer} busy={busy} onSubmit={working ? undefined : () => void submit()}
+        action={working && <button type="button" className="button" disabled={busy} onClick={onStop}><Square size={11} />停止</button>} />
     </div>
-  </form>;
+  </div>;
 }
 
 

@@ -2,7 +2,7 @@ export type PaperStatus = "parsed" | "needs_review" | "parse_failed" | "parsing"
 export type AnalysisStatus = "none" | "running" | "complete" | "stale" | "failed";
 export type IdeaStatus = "candidate" | "continue" | "parked" | "rejected";
 export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent";
-export type View = "overview" | "papers" | "paper-detail" | "discussion" | "ideas" | "experiments" | "project-environment" | "notes" | "files";
+export type View = "overview" | "papers" | "paper-detail" | "discussion" | "ideas" | "experiments" | "project-environment" | "notes" | "files" | "app-iteration";
 
 export type PaperAnalysisStepStage = "prepare" | "read" | "synthesize" | "verify";
 export type PaperAnalysisStepStatus = "running" | "complete" | "failed";
@@ -113,7 +113,15 @@ export interface Paper {
   agentMessages?: PaperAgentMessage[];
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  size: number;
+  mediaType?: string;
+}
+
 export interface PaperAgentMessage {
+  attachments?: ChatAttachment[];
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -151,6 +159,7 @@ export interface EvidenceSource {
 }
 
 export interface Message {
+  attachments?: ChatAttachment[];
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -316,6 +325,7 @@ export interface ExperimentConversation {
 export type ExperimentEventType = "user" | "agent" | "system" | "error" | "command" | "file" | "tool" | "job";
 
 export interface ExperimentEvent {
+  attachments?: ChatAttachment[];
   id: string;
   at: string;
   type: ExperimentEventType;
@@ -528,6 +538,13 @@ export interface LlmProviderDraft {
 }
 
 export interface DesktopBridge {
+  iterationMode(): Promise<{ preview: boolean }>;
+  iterationSnapshot(): Promise<import("./screens/app-iteration/model").IterationSnapshot>;
+  chooseIterationRepository(): Promise<void>;
+  iterationAction(action: import("./screens/app-iteration/model").IterationAction, input?: Record<string, unknown>): Promise<void>;
+  iterationDiff(id: string): Promise<{ sha: string | null; files: string[] }>;
+  iterationPatch(id: string, file: string): Promise<{ text: string; truncated: boolean }>;
+  iterationArtifact(id: string, verifyId: number, kind: "log" | "screenshot", file: string): Promise<string>;
   listExperiments(projectId: string): Promise<ExperimentSummary[]>;
   getExperiment(projectId: string, experimentId: string): Promise<ExperimentSnapshot>;
   createExperiment(projectId: string, input:
@@ -535,7 +552,11 @@ export interface DesktopBridge {
     | { kind: "designed"; ideaId: string; baselineId?: string | null; paperIds?: string[]; goal?: string; title?: string; settings?: Partial<ExperimentSettings> }): Promise<ExperimentSnapshot>;
   createExperimentConversation(projectId: string, experimentId: string, title?: string): Promise<ExperimentConversation>;
   renameExperimentConversation(projectId: string, experimentId: string, conversationId: string, title: string): Promise<ExperimentConversation>;
-  sendExperimentMessage(projectId: string, experimentId: string, conversationId: string, text: string): Promise<Experiment>;
+  chooseChatAttachments(directory: boolean): Promise<ChatAttachment[]>;
+  importChatAttachments(files: File[]): Promise<ChatAttachment[]>;
+  previewChatAttachment(id: string): Promise<string | null>;
+  revealChatAttachment(id: string): Promise<void>;
+  sendExperimentMessage(projectId: string, experimentId: string, conversationId: string, text: string, attachmentIds?: string[]): Promise<Experiment>;
   answerExperimentQuestion(projectId: string, experimentId: string, conversationId: string, requestId: string, answers: Record<string, string>): Promise<Experiment>;
   stopExperiment(projectId: string, experimentId: string, conversationId: string): Promise<Experiment>;
   updateExperimentSettings(projectId: string, experimentId: string, settings: Partial<ExperimentSettings>): Promise<Experiment>;
@@ -578,12 +599,12 @@ export interface DesktopBridge {
   readPaper(payload: { projectId: string; paperId: string }): Promise<Uint8Array>;
   saveIdea(payload: { projectId: string; idea: Partial<Idea> }): Promise<Idea>;
   updateIdea(payload: { projectId: string; ideaId: string; status: IdeaStatus; reason?: string }): Promise<Idea>;
-  sendMessage(payload: { projectId: string; discussionId?: string | null; content: string; paperIds: string[]; scope?: DiscussionScope }): Promise<{ answer: string; sources: EvidenceSource[]; discussion: Discussion; discussions: DiscussionSummary[]; papers: Paper[] }>;
+  sendMessage(payload: { projectId: string; discussionId?: string | null; content: string; paperIds: string[]; scope?: DiscussionScope; attachmentIds?: string[] }): Promise<{ answer: string; sources: EvidenceSource[]; discussion: Discussion; discussions: DiscussionSummary[]; papers: Paper[] }>;
   getDiscussion(payload: { projectId: string; discussionId: string }): Promise<Discussion>;
   createDiscussion(payload: { projectId: string; title?: string }): Promise<{ discussion: Discussion; discussions: DiscussionSummary[] }>;
   renameDiscussion(payload: { projectId: string; discussionId: string; title: string }): Promise<{ discussion: Discussion; discussions: DiscussionSummary[] }>;
   deleteDiscussion(payload: { projectId: string; discussionId: string }): Promise<{ discussions: DiscussionSummary[] }>;
-  sendPaperAgentMessage(payload: { projectId: string; paperId: string; content: string }): Promise<{ answer: string; paper: Paper }>;
+  sendPaperAgentMessage(payload: { projectId: string; paperId: string; content: string; attachmentIds?: string[] }): Promise<{ answer: string; paper: Paper }>;
   getPaperAgentState(payload: { projectId: string; paperId: string }): Promise<PaperAgentState>;
   answerPaperAgentQuestion(payload: { projectId: string; paperId: string; requestId: string; answers: Record<string, string> }): Promise<{ paper: Paper; state: PaperAgentState }>;
   stopPaperAgent(payload: { projectId: string; paperId: string }): Promise<PaperAgentState>;

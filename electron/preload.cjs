@@ -3,13 +3,33 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 
 contextBridge.exposeInMainWorld("autoresearch", {
+  chooseChatAttachments: (directory) => invoke("attachment:choose", { directory }),
+  importChatAttachments: async (files) => {
+    if (files.length > 50) throw new Error("一次最多添加 50 个附件。");
+    const items = await Promise.all(files.map(async (file) => {
+      const path = webUtils.getPathForFile(file);
+      if (path) return { path };
+      if (file.size > 25 * 1024 * 1024) throw new Error(`${file.name} 超过 25 MB。`);
+      return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+    }));
+    return invoke("attachment:import", items);
+  },
+  previewChatAttachment: (id) => invoke("attachment:preview", id),
+  revealChatAttachment: (id) => invoke("attachment:reveal", id),
+  iterationMode: () => invoke("iteration:mode"),
+  iterationSnapshot: () => invoke("iteration:snapshot"),
+  chooseIterationRepository: () => invoke("iteration:choose"),
+  iterationAction: (action, input) => invoke("iteration:action", { action, input }),
+  iterationDiff: (id) => invoke("iteration:diff", { id }),
+  iterationPatch: (id, file) => invoke("iteration:patch", { id, file }),
+  iterationArtifact: (id, verifyId, kind, file) => invoke("iteration:artifact", { id, verifyId, kind, file }),
   // 实验复现
   listExperiments: (projectId) => invoke("experiment:list", { projectId }),
   getExperiment: (projectId, experimentId) => invoke("experiment:get", { projectId, experimentId }),
   createExperiment: (projectId, input) => invoke("experiment:create", { projectId, input }),
   createExperimentConversation: (projectId, experimentId, title) => invoke("experiment:conversation:create", { projectId, experimentId, title }),
   renameExperimentConversation: (projectId, experimentId, conversationId, title) => invoke("experiment:conversation:rename", { projectId, experimentId, conversationId, title }),
-  sendExperimentMessage: (projectId, experimentId, conversationId, text) => invoke("experiment:send", { projectId, experimentId, conversationId, text }),
+  sendExperimentMessage: (projectId, experimentId, conversationId, text, attachmentIds) => invoke("experiment:send", { projectId, experimentId, conversationId, text, attachmentIds }),
   answerExperimentQuestion: (projectId, experimentId, conversationId, requestId, answers) => invoke("experiment:answer-question", { projectId, experimentId, conversationId, requestId, answers }),
   stopExperiment: (projectId, experimentId, conversationId) => invoke("experiment:stop", { projectId, experimentId, conversationId }),
   updateExperimentSettings: (projectId, experimentId, settings) => invoke("experiment:settings", { projectId, experimentId, settings }),

@@ -9,6 +9,7 @@ import {
   FlaskConical,
   FolderOpen,
   FolderPlus,
+  GitPullRequest,
   Leaf,
   Lightbulb,
   LoaderCircle,
@@ -33,6 +34,7 @@ import { ExperimentView, type ExperimentIntent } from "../screens/experiments/Ex
 import { ProjectEnvironmentPage } from "../screens/project-environment/ProjectEnvironmentView";
 import { ResearchNotesView } from "../screens/research-notes/ResearchNotesView";
 import { ProjectFilesView } from "../screens/project-files/ProjectFilesView";
+import { AppIterationView } from "../screens/app-iteration/AppIterationView";
 import { IconButton, Modal } from "../components/Shared";
 import { anyAnalysis, isLiveProgress, taskKeys } from "./tasks";
 import { ModelSwitcher } from "../components/llm/ModelSwitcher";
@@ -50,6 +52,7 @@ const viewTitles: Record<View, string> = {
   notes: "研究笔记",
   files: "课题文件",
   ideas: "实验",
+  "app-iteration": "应用迭代",
 };
 
 const reasoningEffortChoices: Array<{ value: CodexReasoningEffort; label: string }> = [
@@ -70,6 +73,8 @@ const discussionKey = (projectId: string, discussionId: string | null) => `${pro
 const latestDiscussionId = (project: Project | null | undefined) => [...(project?.discussions ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id ?? null;
 
 function App() {
+  const [candidatePreview, setCandidatePreview] = useState(false);
+  useEffect(() => { void window.autoresearch?.iterationMode?.().then(({ preview }) => setCandidatePreview(preview)).catch(() => {}); }, []);
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [view, setView] = useState<View>("overview");
@@ -400,10 +405,10 @@ function App() {
     } catch (error) { setToast(errorMessage(error)); }
   };
 
-  const sendPaperAgentMessage = async (paperId: string, content: string) => {
+  const sendPaperAgentMessage = async (paperId: string, content: string, attachmentIds?: string[]) => {
     if (!activeProject) throw new Error("当前没有课题。");
     try {
-      const result = await window.autoresearch.sendPaperAgentMessage({ projectId: activeProject.id, paperId, content });
+      const result = await window.autoresearch.sendPaperAgentMessage({ projectId: activeProject.id, paperId, content, attachmentIds });
       setSnapshot((current) => current ? {
         ...current,
         projects: current.projects.map((project) => project.id === activeProject.id
@@ -501,7 +506,7 @@ function App() {
     setDiscussionPending((current) => ({ ...current, [pendingKey]: input.content }));
     setQuestion("");
     try {
-      const result = await window.autoresearch.sendMessage({ projectId, discussionId: input.discussionId, content: input.content, paperIds: input.paperIds, scope: input.scope });
+      const result = await window.autoresearch.sendMessage({ projectId, ...input });
       // 只更新讨论列表和论文的解析状态；分析稿等其他字段以界面上最新的为准。
       const statusById = new Map(result.papers.map((paper) => [paper.id, paper.status]));
       patchProject(projectId, (project) => ({
@@ -675,17 +680,18 @@ function App() {
         <button className="side-folder" title={modelReady ? `当前模型：${modelSummary}` : "模型还没有配置好"} onClick={openSettings}><Settings2 size={16} /><span>模型与数据设置</span><span className={`connection-dot ${modelReady ? "is-on" : ""}`} /></button>
         <button className="side-folder" onClick={openWorkspace} title={workspacePath}><FolderOpen size={16} /><span>打开数据目录</span><ArrowUpRight size={14} /></button>
       </>}
-      <div className="sidebar-bottom"><span className="sidebar-version">AUTORESEARCH · {__APP_VERSION__}</span><span className="local-badge"><span />本地工作区</span></div>
+      {!candidatePreview && <div className="side-nav"><NavItem active={view === "app-iteration"} icon={<GitPullRequest size={17} />} label="应用迭代" onClick={() => setView("app-iteration")} /></div>}
+      <div className="sidebar-bottom"><span className="sidebar-version">AUTORESEARCH · {__APP_VERSION__}</span><span className="local-badge"><span />{candidatePreview ? "候选预览" : "本地工作区"}</span></div>
     </aside>
 
     <main className="main-column">
       <header className="topbar">
-        <div className="breadcrumbs"><span>{activeProject?.title ?? "研究工作区"}</span>{activeProject && <><ChevronRight size={14} /><strong>{viewTitles[view]}</strong></>}</div>
+        <div className="breadcrumbs"><span>{view === "app-iteration" ? "AutoResearch" : activeProject?.title ?? "研究工作区"}</span>{(activeProject || view === "app-iteration") && <><ChevronRight size={14} /><strong>{viewTitles[view]}</strong></>}</div>
         <div className="topbar-actions"><ModelSwitcher state={llmState} onSelect={selectModel} onManage={openSettings} /><form className="search-wrap" onSubmit={searchWorkspace}><Search size={15} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} aria-label="搜索课题内容" placeholder="搜索文献、Idea、原文" />{searchBusy ? <LoaderCircle size={13} className="spin" /> : <kbd className="search-kbd">Ctrl K</kbd>}</form>
         </div>
       </header>
 
-      {!activeProject ? <WelcomeState onCreate={() => setCreateOpen(true)} /> : <div className="content-scroll">
+      {view === "app-iteration" ? <AppIterationView /> : !activeProject ? <WelcomeState onCreate={() => setCreateOpen(true)} /> : <div className="content-scroll">
         {view === "overview" && <OverviewView
           project={activeProject}
           ideas={visibleIdeas}

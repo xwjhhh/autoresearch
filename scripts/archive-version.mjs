@@ -6,8 +6,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceItems = [
-  "src", "electron", "assets", "dist", "scripts", ".autoresearch-root", ".gitignore", "AGENTS.md",
+  "src", "electron", "codex", "assets", "dist", "scripts", "tests", "playwright.config.mjs", ".autoresearch-root", ".gitignore", "AGENTS.md",
   "index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts", "README.md", "交付报告.md", "versions/README.md",
+  ".agents/skills/add-ipc-api/SKILL.md", ".agents/skills/check-ui-change/SKILL.md",
+  ".agents/skills/fix-validation-failure/SKILL.md", ".agents/skills/write-acceptance-test/SKILL.md",
 ];
 const exists = async (path) => {
   try { await access(path); return true; }

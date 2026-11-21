@@ -1,0 +1,38 @@
+/* Codex 需要研究者决定时弹出的问题；实验复现和论文页 Codex 共用。 */
+.exp-question-backdrop { z-index: 30; padding: 16px; background: rgba(20, 31, 28, .48); }
+.exp-question-modal { width: min(100%, 720px); max-height: min(90vh, 820px); display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden; }
+.exp-question-header { display: flex; align-items: center; gap: 12px; flex: none; padding: 19px 22px; border-bottom: 1px solid #e8ede8; }
+.exp-question-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: none; color: #2f6b52; border: 1px solid #d2e2d5; border-radius: 6px; background: #edf5ef; }
+.exp-question-header h2 { margin: 0; color: #303c38; font-size: 15px; font-weight: 600; }
+.exp-question-header p { margin: 4px 0 0; color: #687572; font-size: 11px; line-height: 1.5; }
+.exp-question-modal form { min-height: 0; display: flex; flex-direction: column; }
+.exp-question-list { min-height: 0; overflow-y: auto; padding: 4px 22px; scrollbar-width: thin; }
+.exp-question-item { min-width: 0; padding: 16px 0 18px; margin: 0; border: 0; border-bottom: 1px solid #edf0ed; }
+.exp-question-item:last-child { border-bottom: 0; }
+.exp-question-item legend { display: flex; align-items: center; gap: 8px; padding: 0; color: #394742; font-size: 11px; }
+.exp-question-item legend span { width: 21px; height: 21px; display: grid; place-items: center; flex: none; color: #326c54; border-radius: 50%; background: #e8f2ea; font: 10px var(--mono); }
+.exp-question-item legend strong { font-weight: 600; }
+.exp-question-item > p { margin: 8px 0 11px 29px; color: #2d3935; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.exp-question-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 7px; margin-left: 29px; }
+.exp-question-option { min-width: 0; min-height: 44px; display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border: 1px solid #dfe6e0; border-radius: 5px; background: #fff; cursor: pointer; }
+.exp-question-option:hover { border-color: #a7c5b1; background: #f8fbf8; }
+.exp-question-option.is-selected, .exp-question-other.is-selected > .exp-question-option { border-color: #83ad94; background: #eff7f0; }
+.exp-question-option input { width: 14px; height: 14px; flex: none; margin: 2px 0 0; accent-color: #367759; }
+.exp-question-option > span { min-width: 0; display: grid; gap: 3px; color: #36433f; font-size: 11px; line-height: 1.45; }
+.exp-question-option strong { font-weight: 600; overflow-wrap: anywhere; }
+.exp-question-option small { color: #697570; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.exp-question-other { display: grid; gap: 7px; margin: 7px 0 0 29px; }
+.exp-question-other-choice { width: 100%; }
+.exp-question-other textarea { width: 100%; min-height: 58px; padding: 8px 10px; color: #2c3836; border: 1px solid #dfe5df; border-radius: 5px; background: #fff; font-size: 11px; line-height: 1.55; resize: vertical; }
+.exp-question-other textarea:focus { border-color: #8bb7a1; outline: 0; box-shadow: 0 0 0 2px rgba(35, 121, 99, .09); }
+.exp-question-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 12px 22px 15px; border-top: 1px solid #e8ede8; background: #fbfcfb; }
+.exp-question-actions .button:first-child { color: #6d514b; }
+
+@media (max-width: 620px) {
+  .exp-question-backdrop { padding: 8px; }
+  .exp-question-header { padding: 15px 16px; }
+  .exp-question-list { padding: 2px 16px; }
+  .exp-question-item > p, .exp-question-options, .exp-question-other { margin-left: 0; }
+  .exp-question-actions { padding: 10px 16px 13px; }
+  .exp-question-actions .button { flex: 1 1 auto; justify-content: center; }
+}

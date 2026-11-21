@@ -131,7 +131,6 @@
 .exp-composer { justify-self: stretch; width: 100%; max-width: none; min-width: 0; margin: 0; padding: 10px 22px 14px; }
 .exp-composer-inner { width: 100%; max-width: 736px; min-width: 0; display: flex; flex-direction: column; gap: 6px; margin: 0 auto; }
 .exp-composer-inner > label { min-width: 0; color: #5f6d6b; font-size: 10px; font-weight: 600; white-space: nowrap; }
-.exp-composer-inner textarea { width: 100%; min-width: 0; min-height: 64px; max-height: 220px; padding: 8px 11px; color: #2c3836; border: 1px solid #dfe5df; border-radius: 6px; background: #fff; font-size: 12px; line-height: 1.6; resize: vertical; }
 .exp-composer-row { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .exp-composer-status { display: flex; align-items: center; gap: 6px; min-width: 0; color: #5f6d6b; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .exp-composer-status.is-error { color: #94403a; }

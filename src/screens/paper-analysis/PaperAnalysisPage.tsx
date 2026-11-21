@@ -28,7 +28,7 @@ interface PaperAnalysisPageProps {
   /** 带着这篇论文去新建复现实验 */
   onReproduce: (paper: Paper) => void;
   onOpenExperiment: (experimentId: string) => void;
-  onAgentMessage: (paperId: string, content: string) => Promise<{ answer: string; paper: Paper }>;
+  onAgentMessage: (paperId: string, content: string, attachmentIds?: string[]) => Promise<{ answer: string; paper: Paper }>;
   onPaperChange: (paper: Paper) => void;
   onSaveNote: (text: string, options: { paperId?: string; fromMessageId?: string }) => Promise<ResearchNote | null>;
 }
@@ -85,7 +85,7 @@ export function PaperAnalysisPage(props: PaperAnalysisPageProps) {
     onUpdatePaper={(payload) => props.onUpdatePaper(selectedPaper, payload)}
     onReproduce={props.onReproduce}
     onOpenExperiment={props.onOpenExperiment}
-    onAgentMessage={(content) => props.onAgentMessage(selectedPaper.id, content)}
+    onAgentMessage={(content, attachmentIds) => props.onAgentMessage(selectedPaper.id, content, attachmentIds)}
     onPaperChange={props.onPaperChange}
     onSaveNote={props.onSaveNote}
     pdfPane={<Suspense fallback={<div className="pdf-loading"><LoaderCircle className="spin" size={18} />正在打开原文</div>}><PdfCitationViewer key={pdfAt ? `${pdfAt.page}:${pdfAt.nonce}` : "start"} projectId={project.id} paper={selectedPaper} page={pdfAt?.page ?? 1} quote={pdfAt?.quote} onClose={() => undefined} embedded /></Suspense>}

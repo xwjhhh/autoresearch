@@ -23,7 +23,7 @@ export function PaperAnalysisDetailView({ project, paper, progress, analyzing, p
   onUpdatePaper: (payload: { role?: PaperRole; analysisDepth?: AnalysisDepth }) => void;
   onReproduce: (paper: Paper) => void;
   onOpenExperiment: (experimentId: string) => void;
-  onAgentMessage: (content: string) => Promise<{ answer: string; paper: Paper }>;
+  onAgentMessage: (content: string, attachmentIds?: string[]) => Promise<{ answer: string; paper: Paper }>;
   onPaperChange: (paper: Paper) => void;
   onSaveNote: (text: string, options: { paperId?: string; fromMessageId?: string }) => Promise<ResearchNote | null>;
 }) {

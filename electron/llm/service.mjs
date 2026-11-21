@@ -3,6 +3,7 @@
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { complete as adapterComplete, listModels as adapterListModels } from "./adapters.mjs";
+import { modelAttachmentContent } from "../chat-attachments.mjs";
 import {
   CODEX_PROVIDER_ID, PROVIDER_PRESETS, cleanApiKey, makeProviderId, migrateLegacySettings, normalizeBaseUrl,
   normalizeProvider, protocolFor, sanitizeLlmConfig,
@@ -257,7 +258,13 @@ export class LlmService {
       const result = await this.runCodexOnce(messages, options);
       return { content: result.content, source: connection.label };
     }
-    const { content } = await adapterComplete(connection, messages, { ...options, fetchImpl: this.fetchImpl });
+    const files = options.attachments ?? [];
+    let input = messages;
+    if (files.length) {
+      const last = messages.at(-1);
+      input = [...messages.slice(0, -1), { ...last, content: await modelAttachmentContent(last.content, files, connection.protocol) }];
+    }
+    const { content } = await adapterComplete(connection, input, { ...options, fetchImpl: this.fetchImpl });
     return { content, source: connection.label };
   }
 

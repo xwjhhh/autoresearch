@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, ChevronDown, ChevronUp, LoaderCircle, Send, Sparkles, Square, StickyNote } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, ChevronUp, LoaderCircle, Sparkles, Square, StickyNote } from "lucide-react";
 import type { DesktopBridge, Paper, PaperAgentMessage, PaperAgentState, Project, ResearchNote } from "../../types";
 import { AgentQuestionDialog } from "../../components/AgentQuestionDialog";
 import { Markdown } from "../../components/markdown.jsx";
@@ -7,7 +7,7 @@ import { Markdown } from "../../components/markdown.jsx";
 interface PaperCodexDockProps {
   project: Project;
   paper: Paper;
-  onAgentMessage: (content: string) => Promise<{ answer: string; paper: Paper }>;
+  onAgentMessage: (content: string, attachmentIds?: string[]) => Promise<{ answer: string; paper: Paper }>;
   /** 回答 Codex 的问题后，把更新过的论文（含对话）交回课题数据 */
   onPaperChange: (paper: Paper) => void;
   onSaveNote: (text: string, options: { paperId?: string; fromMessageId?: string }) => Promise<ResearchNote | null>;
@@ -21,6 +21,7 @@ interface PaperCodexDockProps {
 export function PaperCodexDock({ project, paper, onAgentMessage, onPaperChange, onSaveNote, api = window.autoresearch }: PaperCodexDockProps) {
   const [open, setOpen] = useState(() => (paper.agentMessages?.length ?? 0) > 0);
   const [question, setQuestion] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [sending, setSending] = useState(false);
   const [agent, setAgent] = useState<PaperAgentState | null>(null);
   const [answering, setAnswering] = useState(false);
@@ -47,19 +48,19 @@ export function PaperCodexDock({ project, paper, onAgentMessage, onPaperChange, 
 
   const savedMessageIds = new Set((project.notes ?? []).map((note) => note.fromMessageId).filter((id): id is string => Boolean(id)));
 
-  const ask = async (event?: FormEvent) => {
-    event?.preventDefault();
+  const ask = async () => {
     const content = question.trim();
-    if (!content || working) return;
-    const userMessage: PaperAgentMessage = { id: crypto.randomUUID(), role: "user", content, createdAt: new Date().toISOString() };
+    if ((!content && !attachments.length) || working) return;
+    const userMessage: PaperAgentMessage = { id: crypto.randomUUID(), role: "user", content, attachments, createdAt: new Date().toISOString() };
     setMessages((current) => [...current, userMessage]);
-    setQuestion("");
     setSending(true);
     setError("");
     try {
-      const result = await onAgentMessage(content);
+      const result = await onAgentMessage(content, attachments.map(({ id }) => id));
+      setQuestion("");
+      setAttachments([]);
       setMessages(result.paper.agentMessages ?? [...messages, userMessage, { id: crypto.randomUUID(), role: "assistant", content: result.answer, createdAt: new Date().toISOString() }]);
-    } catch { /* App 已显示错误；对话以保存的记录为准。 */ }
+    } catch { setMessages((current) => current.filter(({ id }) => id !== userMessage.id)); }
     finally { setSending(false); }
   };
 
@@ -100,21 +101,13 @@ export function PaperCodexDock({ project, paper, onAgentMessage, onPaperChange, 
     {open && <>
       <div className="pa-dock-messages" ref={scroller} aria-live="polite">
         {messages.length ? messages.map((message) => <article className={`pa-dock-message pa-dock-message--${message.role}`} key={message.id}>
-          <div className="pa-dock-bubble">{message.role === "assistant" ? <div className="pa-markdown"><Markdown source={message.content} /></div> : message.content}</div>
+          <div className="pa-dock-bubble"><ChatAttachments files={message.attachments} api={api} />{message.role === "assistant" ? <div className="pa-markdown"><Markdown source={message.content} /></div> : message.content}</div>
           {message.role === "assistant" && <button type="button" className="pa-link-button" disabled={savedMessageIds.has(message.id)} onClick={() => void onSaveNote(message.content, { paperId: paper.id, fromMessageId: message.id })}>{savedMessageIds.has(message.id) ? <><Check size={12} />已存为笔记</> : <><StickyNote size={12} />存为本文笔记</>}</button>}
         </article>) : <p className="pa-dock-empty">问这篇论文的问题，或者让 Codex 帮你整理、计算、查资料。</p>}
         {working && <div className="pa-dock-working"><LoaderCircle className="spin" size={13} />{agent?.pendingQuestion ? "Codex 在等你回答问题" : "Codex 正在处理"}</div>}
         {error && <p className="pa-dock-error" role="alert">{error}</p>}
       </div>
-      <form className="pa-dock-composer" onSubmit={ask}>
-        <label className="sr-only" htmlFor={`codex-${paper.id}`}>向 Codex 发送消息</label>
-        <textarea id={`codex-${paper.id}`} value={question} rows={2} disabled={working} placeholder={working ? "Codex 正在处理，结束后再发下一条" : "向 Codex 发送消息"} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => {
-          // 中文输入法用回车上屏时不发送。
-          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-          if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void ask(); }
-        }} />
-        <button className="button button--primary pa-send" aria-label="发送消息" disabled={!question.trim() || working}>{sending ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}</button>
-      </form>
+      <ChatComposer label="向 Codex 发送消息" placeholder="问论文，或附上要一起看的资料" value={question} onChange={setQuestion} files={attachments} setFiles={setAttachments} disabled={working} busy={sending} onSubmit={() => void ask()} api={api} />
       <p className="pa-dock-hint">Enter 发送 · Shift + Enter 换行</p>
     </>}
     {agent?.pendingQuestion && <AgentQuestionDialog
@@ -129,3 +122,5 @@ export function PaperCodexDock({ project, paper, onAgentMessage, onPaperChange, 
   </section>;
 }
 
+import { ChatAttachments, ChatComposer } from "../../components/ChatComposer";
+import type { ChatAttachment } from "../../types";

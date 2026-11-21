@@ -1,7 +1,7 @@
 {
-  "version": "0.7.1",
-  "archivedAt": "2026-11-02T06:52:01.244Z",
-  "directory": "0.7.1/",
-  "installer": "0.7.1/windows/AutoResearch-0.7.1-Windows-Setup.exe",
-  "sha256": "c723be18070cb07b043780846a157e46e4bbe91be051a658c8c85449c08f2f4a"
+  "version": "0.8.3",
+  "archivedAt": "2026-11-21T00:44:07.750Z",
+  "directory": "0.8.3/",
+  "installer": "0.8.3/windows/AutoResearch-0.8.3-Windows-Setup.exe",
+  "sha256": "fd0a3f8e8c00d763c9b83a5b592440e3f5f582cd996c030aae780f1ccea7afbd"
 }

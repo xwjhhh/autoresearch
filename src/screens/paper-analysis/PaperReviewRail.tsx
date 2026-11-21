@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, FolderOpen, Globe2, LoaderCircle, Play, RefreshCw, Send, Square, StickyNote } from "lucide-react";
+import { Check, FolderOpen, Globe2, LoaderCircle, Play, RefreshCw, Square, StickyNote } from "lucide-react";
 import type { DesktopBridge, Paper, PaperAgentMessage, PaperAgentState, PaperAnalysisProgress, Project, ResearchNote } from "../../types";
 import { AgentQuestionDialog } from "../../components/AgentQuestionDialog";
 import { AnalysisTraceView, canResumePaper } from "./PaperAnalysisWorkspace";
@@ -11,7 +11,7 @@ interface PaperReviewRailProps {
   /** 这篇论文正在分析 */
   analyzing: boolean;
   onAnalyze: () => void;
-  onAgentMessage: (content: string) => Promise<{ answer: string; paper: Paper }>;
+  onAgentMessage: (content: string, attachmentIds?: string[]) => Promise<{ answer: string; paper: Paper }>;
   /** 回答 Codex 的问题后，把更新过的论文（含对话）交回课题数据 */
   onPaperChange: (paper: Paper) => void;
   api?: DesktopBridge;
@@ -22,6 +22,7 @@ interface PaperReviewRailProps {
 /** 论文分析页右侧的通用 Codex 对话、分析过程与研究笔记。 */
 export function PaperReviewRail({ project, paper, progress, analyzing, onAnalyze, onAgentMessage, onPaperChange, onSaveNote, onOpenPaper, api = window.autoresearch }: PaperReviewRailProps) {
   const [question, setQuestion] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [sending, setSending] = useState(false);
   const [agent, setAgent] = useState<PaperAgentState | null>(null);
   const [answering, setAnswering] = useState(false);
@@ -45,19 +46,19 @@ export function PaperReviewRail({ project, paper, progress, analyzing, onAnalyze
   const savedMessageIds = new Set(notes.map((note) => note.fromMessageId).filter((id): id is string => Boolean(id)));
   const trace = progress?.trace ?? paper.analysisTrace;
 
-  const ask = async (event: FormEvent) => {
-    event.preventDefault();
+  const ask = async () => {
     const content = question.trim();
-    if (!content || asking) return;
-    const userMessage: PaperAgentMessage = { id: crypto.randomUUID(), role: "user", content, createdAt: new Date().toISOString() };
+    if ((!content && !attachments.length) || asking) return;
+    const userMessage: PaperAgentMessage = { id: crypto.randomUUID(), role: "user", content, attachments, createdAt: new Date().toISOString() };
     setMessages((current) => [...current, userMessage]);
-    setQuestion("");
     setSending(true);
     setAgentError("");
     try {
-      const result = await onAgentMessage(content);
+      const result = await onAgentMessage(content, attachments.map(({ id }) => id));
+      setQuestion("");
+      setAttachments([]);
       setMessages(result.paper.agentMessages ?? [...messages, userMessage, { id: crypto.randomUUID(), role: "assistant", content: result.answer, createdAt: new Date().toISOString() }]);
-    } catch { /* App 已显示错误；对话以保存的记录为准。 */ }
+    } catch { setMessages((current) => current.filter(({ id }) => id !== userMessage.id)); }
     finally { setSending(false); }
   };
   const answer = async (answers: Record<string, string>) => {
@@ -103,22 +104,14 @@ export function PaperReviewRail({ project, paper, progress, analyzing, onAnalyze
     <section className="review-ask review-agent-chat">
       <div className="review-agent-messages" aria-live="polite">
         {messages.length ? messages.map((message) => <article className={`review-agent-message review-agent-message--${message.role}`} key={message.id}>
-          <div className="review-agent-message-copy">{message.content}</div>
+          <div className="review-agent-message-copy"><ChatAttachments files={message.attachments} api={api} />{message.content}</div>
           {message.role === "assistant" && <button type="button" className="text-icon-button" disabled={savedMessageIds.has(message.id)} onClick={() => void saveAnswer(message)}>{savedMessageIds.has(message.id) ? <><Check size={12} />已存为笔记</> : <><StickyNote size={12} />存为本文笔记</>}</button>}
         </article>) : <p className="review-empty">{`围绕「${paper.title}」开始对话`}</p>}
         {asking && <div className="review-agent-working"><LoaderCircle className="spin" size={13} /><span>{agent?.pendingQuestion ? "Codex 在等你回答问题" : "Codex 正在处理"}</span><button type="button" className="text-icon-button" disabled={stopping} onClick={() => void stopAgent()}><Square size={11} />停止</button></div>}
         {agentError && <p className="review-agent-error" role="alert">{agentError}</p>}
         <div ref={messageEnd} />
       </div>
-      <form className="review-composer" onSubmit={ask}>
-        <label htmlFor="review-question" className="sr-only">向 Codex 发送消息</label>
-        <textarea id="review-question" value={question} onChange={(event) => setQuestion(event.target.value)} rows={3} placeholder="向 Codex 发送消息" disabled={asking} onKeyDown={(event) => {
-          // 中文输入法用回车上屏时不发送。
-          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-          if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
-        }} />
-        <button className="send-button" aria-label="发送消息" disabled={!question.trim() || asking}>{asking ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}</button>
-      </form>
+      <ChatComposer label="向 Codex 发送消息" placeholder="向 Codex 发送消息" value={question} onChange={setQuestion} files={attachments} setFiles={setAttachments} disabled={asking} busy={sending} onSubmit={() => void ask()} api={api} />
     </section>
 
     <section className="review-notes">
@@ -140,3 +133,5 @@ export function PaperReviewRail({ project, paper, progress, analyzing, onAnalyze
     />}
   </aside>;
 }
+import { ChatAttachments, ChatComposer } from "../../components/ChatComposer";
+import type { ChatAttachment } from "../../types";

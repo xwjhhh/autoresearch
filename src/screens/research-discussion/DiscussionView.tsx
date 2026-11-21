@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { BookOpen, Check, ChevronDown, FlaskConical, Lightbulb, LoaderCircle, MessageSquareText, Pencil, Plus, Send, Sparkles, StickyNote, Trash2, X } from "lucide-react";
+import { BookOpen, Check, ChevronDown, FlaskConical, Lightbulb, LoaderCircle, MessageSquareText, Pencil, Plus, Sparkles, StickyNote, Trash2, X } from "lucide-react";
 import type { DesktopBridge, Discussion, DiscussionScope, EvidenceSource, Message, Paper, Project } from "../../types";
 import { formatDate } from "../../uiText";
 import { Markdown } from "../../components/markdown.jsx";
@@ -18,6 +18,7 @@ const timeOf = (value: string) => {
 };
 
 export interface DiscussionSendInput {
+  attachmentIds?: string[];
   discussionId: string | null;
   content: string;
   paperIds: string[];
@@ -97,13 +98,16 @@ export function DiscussionView({ project, activeId, onSelect, question, setQuest
   const currentScope = scopes.find((item) => item.id === scope) ?? scopes[0];
   const title = summary?.title ?? (activeId ? "讨论" : "新讨论");
 
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  useEffect(() => setAttachments([]), [project.id, activeId]);
+
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     const content = question.trim();
-    if (!content || sending) return;
+    if ((!content && !attachments.length) || sending) return;
     setError("");
-    const saved = await onSend({ discussionId: activeId, content, paperIds, scope });
-    if (saved) setDiscussion(saved);
+    const saved = await onSend({ discussionId: activeId, content, paperIds, scope, attachmentIds: attachments.map(({ id }) => id) });
+    if (saved) { setDiscussion(saved); setAttachments([]); }
   };
 
   const cite = (sources: EvidenceSource[]) => (paperId: string | null, page: number, raw: string) => {
@@ -162,7 +166,7 @@ export function DiscussionView({ project, activeId, onSelect, question, setQuest
           {messages.map((message, index) => message.role === "user"
             ? <article className="ds-msg ds-msg--user" key={message.id}>
               <header><strong>你</strong><time>{timeOf(message.createdAt)}</time></header>
-              <div className="ds-bubble">{message.content}</div>
+              <div className="ds-bubble"><ChatAttachments files={message.attachments} api={api} />{message.content}</div>
             </article>
             : <article className="ds-msg ds-msg--assistant" key={message.id}>
               <header><span className="ds-avatar" aria-hidden="true"><Sparkles size={11} /></span><strong>研究助手</strong><time>{timeOf(message.createdAt)}</time>{message.scope && <span className="ds-scope-tag">{message.scope === "snippets" ? "只看原文" : "原文 + 分析稿和笔记"}</span>}</header>
@@ -212,17 +216,11 @@ export function DiscussionView({ project, activeId, onSelect, question, setQuest
             <p className="ds-muted">只在勾选的论文里检索原文。这个讨论会记住你的选择。</p>
           </div>}
         </div>
-        <div className="ds-input-row">
-          <label className="sr-only" htmlFor="ds-question">研究问题</label>
-          <textarea id="ds-question" value={question} rows={2} placeholder="讨论文献、比较方法，或提出研究方向" onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => {
-            // 中文输入法用回车上屏时不发送。
-            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-            if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); }
-          }} />
-          <button className="button button--primary ds-send" aria-label="发送" disabled={!question.trim() || sending}>{sending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}</button>
-        </div>
+        <ChatComposer label="研究问题" placeholder="讨论文献、比较方法，或提出研究方向" value={question} onChange={setQuestion} files={attachments} setFiles={setAttachments} busy={sending} onSubmit={() => void submit()} status={sending ? "正在回答…" : undefined} api={api} />
         <p className="ds-muted ds-hint">Enter 发送 · Shift + Enter 换行 · 引用会标出论文和页码，推断会注明是推断</p>
       </form>
     </section>
   </div>;
 }
+import { ChatAttachments, ChatComposer } from "../../components/ChatComposer";
+import type { ChatAttachment } from "../../types";

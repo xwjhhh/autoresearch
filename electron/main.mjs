@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, safeStorage, shell } from "electron";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile, copyFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { resolveDefaultDataRoot } from "./data-path.mjs";
 import { discoverProjectDirectories, isProjectId, projectDirectoryName, renameProjectDirectory } from "./project-directories.mjs";
 import { importIntoProject, listProjectFiles, resolveProjectEntry } from "./project-files.mjs";
 import { getCodexSdkStatus, runCodexSdk } from "./codex-sdk.mjs";
+import { runCodexAppServer } from "./codex-app-server.mjs";
 import { searchChunks, termsFor } from "./retrieval.mjs";
 import { isCcswitchHealthy, readCodexProviderRuntimeConfig } from "./codex-config.mjs";
 import { LlmService } from "./llm/service.mjs";
@@ -18,13 +20,25 @@ import { interruptRunningAiCallLogs, interruptRunningAiCallLogsInProject, readAi
 import { ExperimentLab } from "./experiments/service.mjs";
 import { QuestionChannel } from "./agent-questions.mjs";
 import { ProjectEnvironmentService } from "./environments/service.mjs";
+import { AppIterations } from "./iterations.mjs";
+import { parseLaunchProfile } from "./launch-profile.mjs";
+import { ChatAttachments, attachmentMetadata, localAttachmentPrompt } from "./chat-attachments.mjs";
+import { DiscussionStore } from "./discussions.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const isDev = process.argv.includes("--dev");
+const launch = parseLaunchProfile(process.argv);
+if (launch.profile) {
+  mkdirSync(launch.profile, { recursive: true });
+  app.setPath("userData", launch.profile);
+}
+let iterations;
+let iterationDriftTimer;
 let dataRoot;
 let projectsRoot;
 let projectRoots = new Map();
 const settingsPath = join(app.getPath("userData"), "settings.json");
+const chatAttachments = new ChatAttachments(join(app.getPath("userData"), "chat-attachments"));
 const secretPath = join(app.getPath("userData"), "api-key.bin");
 const codexHome = process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(app.getPath("home"), ".codex");
 const codexConfigPath = join(codexHome, "config.toml");
@@ -99,6 +113,11 @@ async function loadProject(projectId) {
   if (!project) throw new Error("课题不存在或已移动。");
   return { file, project };
 }
+
+const discussionStore = (projectId) => new DiscussionStore({
+  projectRoot: () => assertProjectId(projectId),
+  legacyMessages: async () => (await loadProject(projectId)).project.messages ?? [],
+});
 
 async function reconcilePaperStates(projectId, file, project) {
   let changed = false;
@@ -251,17 +270,19 @@ async function workspaceLoad() {
   for (const { project: storedProject } of found) {
     const projectId = storedProject.id;
     const file = projectFile(projectId);
-    await recoverInterruptedAnalyses(projectId, file, storedProject);
+    if (!launch.preview) await recoverInterruptedAnalyses(projectId, file, storedProject);
     const projectRoot = assertProjectId(projectId);
     await Promise.all([
       mkdir(join(projectRoot, "Experiments", "PaperReproductions"), { recursive: true }),
       mkdir(join(projectRoot, "Experiments", "DesignedExperiments"), { recursive: true }),
     ]);
-    if (!recoveredAiCallLogRoots.has(projectRoot)) {
+    if (!launch.preview && !recoveredAiCallLogRoots.has(projectRoot)) {
       recoveredAiCallLogRoots.add(projectRoot);
       await interruptRunningAiCallLogsInProject(projectRoot, "应用关闭时 AI 调用中断。", new Date().toISOString()).catch(() => []);
     }
-    projects.push(await reconcilePaperStates(projectId, file, storedProject));
+    const project = await reconcilePaperStates(projectId, file, storedProject);
+    const discussions = discussionStore(projectId);
+    projects.push({ ...project, discussions: await discussions.locked(projectId, () => discussions.list(projectId)) });
   }
   projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return { projects, workspacePath: dataRoot };
@@ -372,7 +393,7 @@ async function setDataRoot(path) {
 
 async function initializeDataRoot() {
   const settings = await readJson(settingsPath, {});
-  const initialPath = settings.workspacePath || process.env.AUTORESEARCH_DATA_DIR || resolveDefaultDataRoot({
+  const initialPath = launch.data || settings.workspacePath || process.env.AUTORESEARCH_DATA_DIR || resolveDefaultDataRoot({
     isDev,
     sourceDirectory: here,
     executablePath: process.execPath,
@@ -560,12 +581,14 @@ async function runCodexOnce(messages, options = {}) {
   try {
     workingDirectory = await mkdtemp(join(app.getPath("temp"), "autoresearch-codex-"));
     const roleNames = { system: "系统指令", user: "用户", assistant: "此前回复" };
+    const files = options.attachments ?? [];
     const prompt = [
-      "你是 AutoResearch 的研究分析模型。优先遵循系统指令，只基于提供的对话和证据回答用户问题；不要读取本地文件、调用工具或访问外部服务。",
+      `你是 AutoResearch 的研究分析模型。优先遵循系统指令，基于提供的对话和证据回答用户问题。${files.length ? "只可使用读取附件所需的本地工具，仅读取列出的文件，不访问外部服务。" : "不要读取本地文件、调用工具或访问外部服务。"}`,
       ...messages.map(({ role, content }) => `【${roleNames[role] || role}】\n${content}`),
+      localAttachmentPrompt(files),
     ].join("\n\n");
     const { signal, reasoningEffort, maxAttempts, timeoutMs } = options;
-    const result = await runCodexSdk(prompt, { codexHome, workingDirectory, signal, reasoningEffort, ...(maxAttempts ? { maxAttempts } : {}), ...(timeoutMs ? { timeoutMs } : {}) });
+    const result = await runCodexSdk(prompt, { codexHome, workingDirectory, signal, reasoningEffort, imagePaths: files.filter((file) => file.mediaType).map((file) => file.path), ...(maxAttempts ? { maxAttempts } : {}), ...(timeoutMs ? { timeoutMs } : {}) });
     if (!result.finalResponse.trim()) throw new Error("Codex CLI 没有返回可读文本。");
     return { content: result.finalResponse.trim() };
   } finally {
@@ -1106,9 +1129,11 @@ async function persistIdea(file, project, idea) {
   return saved;
 }
 
-async function sendMessage({ projectId, content, paperIds = [], scope = "snippets" }) {
-  const question = cleanString(content, maxBodyLength, "消息");
+async function sendMessage({ projectId, discussionId, content, attachmentIds, paperIds = [], scope = "snippets" }) {
   const { file, project } = await loadProject(projectId);
+  const store = discussionStore(projectId);
+  const attachments = await chatAttachments.resolve(attachmentIds);
+  const question = cleanString(content?.trim() || (attachments.length ? "请查看我附上的资料。" : ""), maxBodyLength, "消息");
   await reconcilePaperStates(projectId, file, project);
   const selectedIds = paperIds.filter((id) => project.papers.some((paper) => paper.id === id));
   const allChunks = await loadChunks(projectId, selectedIds);
@@ -1121,8 +1146,11 @@ async function sendMessage({ projectId, content, paperIds = [], scope = "snippet
     chunkId: chunk.chunkId,
     excerpt: chunk.text.slice(0, 700),
   }));
-  const history = Array.isArray(project.messages) ? project.messages : [];
+  const history = discussionId ? (await store.get(projectId, discussionId)).messages : [];
   const contextMessages = history.slice(-10);
+  const recentFiles = contextMessages.findLast((entry) => entry.attachments?.length)?.attachments;
+  const modelAttachments = attachments.length || !recentFiles ? attachments
+    : await chatAttachments.resolve(recentFiles.map(({ id }) => id)).catch(() => []);
   const sourceContext = matches.map((chunk) => {
     const paper = sourceMap.get(chunk.paperId);
     return `[${chunk.paperId} p.${chunk.page} | ${paper?.title ?? "文献"}]\n${chunk.text.slice(0, 1600)}`;
@@ -1140,17 +1168,19 @@ async function sendMessage({ projectId, content, paperIds = [], scope = "snippet
     structuredContext ? `结构化研究上下文：\n${structuredContext}` : "",
     sourceContext ? `检索到的论文片段：\n${sourceContext}` : "当前问题没有检索到文献片段；如回答论文事实，需说明证据不足。",
   ].join("\n\n");
-  const { content: answer } = await callModel([{ role: "system", content: system }, ...contextMessages.filter((message) => message.role === "user" || message.role === "assistant").map(({ role, content: body }) => ({ role, content: body.slice(0, 8000) })), { role: "user", content: question }]);
+  const { content: answer } = await callModel([{ role: "system", content: system }, ...contextMessages.filter((message) => message.role === "user" || message.role === "assistant").map(({ role, content: body }) => ({ role, content: body.slice(0, 8000) })), { role: "user", content: question }], { attachments: modelAttachments });
   const now = new Date().toISOString();
-  project.messages = [...history, { id: randomUUID(), role: "user", content: question, createdAt: now, sources: [], scope }, { id: randomUUID(), role: "assistant", content: answer, createdAt: now, sources, scope }].slice(-80);
-  project.updatedAt = now;
-  await writeJson(file, project);
-  await writeFile(join(assertProjectId(projectId), "Discussions", "messages.json"), `${JSON.stringify(project.messages, null, 2)}\n`, "utf8");
-  return { answer, sources, messages: project.messages, papers: project.papers };
+  const exchange = await store.appendExchange(projectId, discussionId, {
+    paperIds: selectedIds, scope,
+    userMessage: { id: randomUUID(), role: "user", content: question, createdAt: now, sources: [], scope, attachments: attachmentMetadata(attachments) },
+    assistantMessage: { id: randomUUID(), role: "assistant", content: answer, createdAt: now, sources, scope },
+  });
+  return { answer, sources, ...exchange, papers: project.papers };
 }
 
-async function sendPaperAgentMessage({ projectId, paperId, content }) {
-  const question = cleanString(content, maxBodyLength, "消息");
+async function sendPaperAgentMessage({ projectId, paperId, content, attachmentIds }) {
+  const attachments = await chatAttachments.resolve(attachmentIds);
+  const question = cleanString(content?.trim() || (attachments.length ? "请查看我附上的资料。" : ""), maxBodyLength, "消息");
   const safePaperId = assertPaperId(paperId);
   const sessionKey = paperAnalysisKey(projectId, safePaperId);
   if (activePaperAgents.has(sessionKey)) throw new Error("这篇论文的 Codex 正在处理上一条消息。");
@@ -1168,7 +1198,7 @@ async function sendPaperAgentMessage({ projectId, paperId, content }) {
   const parsedTextPath = join("PaperInfo", "references", safePaperId, "parsed", "chunks.jsonl");
   const originalPdfPath = join("PaperInfo", "references", safePaperId, "original.pdf");
   const now = new Date().toISOString();
-  const userMessage = { id: randomUUID(), role: "user", content: question, createdAt: now };
+  const userMessage = { id: randomUUID(), role: "user", content: question, createdAt: now, attachments: attachmentMetadata(attachments) };
   let paper;
   let project;
   let callLog;
@@ -1241,9 +1271,10 @@ async function sendPaperAgentMessage({ projectId, paperId, content }) {
       runAsNode: !process.env.AUTORESEARCH_NODE_PATH && Boolean(process.versions.electron),
     });
     channel.start();
-    const result = await runCodexSdk(prompt, {
+    const result = await runCodexSdk(prompt + localAttachmentPrompt(attachments), {
       codexHome,
       workingDirectory: dataRoot,
+      imagePaths: attachments.filter((file) => file.mediaType).map((file) => file.path),
       threadId,
       signal: controller.signal,
       reasoningEffort: settings.reasoningEffort,
@@ -1451,7 +1482,7 @@ experiments = new ExperimentLab({
     };
   },
   environments,
-  runAgent: async (prompt, { workingDirectory, threadId, network, env, signal, onThread, onEvent, onRetry, conversationId, shellEnvironment }) => {
+  runAgent: async (prompt, { workingDirectory, threadId, network, env, signal, onThread, onEvent, onRetry, conversationId, shellEnvironment, imagePaths }) => {
     const settings = await currentSettings();
     const agent = await llmService.agentRuntime();
     const questionEnv = {
@@ -1463,6 +1494,7 @@ experiments = new ExperimentLab({
       codexHome,
       workingDirectory,
       env,
+      imagePaths,
       threadId,
       onThread,
       onEvent,
@@ -1519,7 +1551,7 @@ function registerHandlers() {
     "experiment:create": ({ projectId, input }) => experiments.create(projectId, input),
     "experiment:conversation:create": ({ projectId, experimentId, title }) => experiments.createConversation(projectId, experimentId, title),
     "experiment:conversation:rename": ({ projectId, experimentId, conversationId, title }) => experiments.renameConversation(projectId, experimentId, conversationId, title),
-    "experiment:send": ({ projectId, experimentId, conversationId, text }) => experiments.send(projectId, experimentId, text, conversationId),
+    "experiment:send": async ({ projectId, experimentId, conversationId, text, attachmentIds }) => experiments.send(projectId, experimentId, text, conversationId, await chatAttachments.resolve(attachmentIds)),
     "experiment:answer-question": ({ projectId, experimentId, conversationId, requestId, answers }) => experiments.answerQuestion(projectId, experimentId, conversationId, requestId, answers),
     "experiment:stop": ({ projectId, experimentId, conversationId }) => experiments.stop(projectId, experimentId, conversationId),
     "experiment:settings": ({ projectId, experimentId, settings }) => experiments.updateSettings(projectId, experimentId, settings),
@@ -1550,6 +1582,7 @@ function registerHandlers() {
   ipcMain.handle("workspace:load", workspaceLoad);
   ipcMain.handle("workspace:path", () => dataRoot);
   ipcMain.handle("workspace:choose", async () => {
+    if (launch.preview) throw new Error("候选预览只能使用启动时指定的数据副本。");
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: "选择研究数据目录",
       defaultPath: dataRoot,
@@ -1654,6 +1687,39 @@ function registerHandlers() {
   });
   ipcMain.handle("idea:save", (_event, payload) => saveIdea(payload));
   ipcMain.handle("idea:update", (_event, payload) => updateIdea(payload));
+  ipcMain.handle("attachment:choose", async (event, { directory } = {}) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const options = { title: directory ? "添加文件夹" : "添加文件", properties: [directory ? "openDirectory" : "openFile", "multiSelections"] };
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? [] : chatAttachments.import(result.filePaths.map((path) => ({ path })));
+  });
+  ipcMain.handle("attachment:import", (_event, items) => chatAttachments.import(items));
+  ipcMain.handle("attachment:preview", async (_event, id) => {
+    const [file] = await chatAttachments.resolve([id]);
+    if (!file.mediaType) return null;
+    const image = nativeImage.createFromPath(file.path);
+    if (image.isEmpty()) return file.size <= 3 * 1024 * 1024 ? `data:${file.mediaType};base64,${(await readFile(file.path)).toString("base64")}` : null;
+    const { width, height } = image.getSize();
+    const scale = Math.min(1, 1000 / Math.max(width, height));
+    return image.resize({ width: Math.max(1, Math.floor(width * scale)) }).toDataURL();
+  });
+  ipcMain.handle("attachment:reveal", async (_event, id) => {
+    const [file] = await chatAttachments.resolve([id]);
+    shell.showItemInFolder(file.path);
+  });
+  ipcMain.handle("discussion:get", (_event, { projectId, discussionId }) => discussionStore(projectId).get(projectId, discussionId));
+  ipcMain.handle("discussion:create", (_event, { projectId, title }) => {
+    const store = discussionStore(projectId);
+    return store.locked(projectId, () => store.create(projectId, { title }));
+  });
+  ipcMain.handle("discussion:rename", (_event, { projectId, discussionId, title }) => {
+    const store = discussionStore(projectId);
+    return store.locked(projectId, () => store.rename(projectId, discussionId, title));
+  });
+  ipcMain.handle("discussion:delete", (_event, { projectId, discussionId }) => {
+    const store = discussionStore(projectId);
+    return store.locked(projectId, () => store.remove(projectId, discussionId));
+  });
   ipcMain.handle("chat:send", (_event, payload) => {
     const paperIds = Array.isArray(payload?.paperIds) ? payload.paperIds : [];
     const scopeId = paperIds.length === 1 ? paperIds[0] : "project";
@@ -1676,12 +1742,13 @@ function registerHandlers() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    show: !(launch.profile && launch.data && process.env.AUTORESEARCH_E2E_HIDDEN === "1"),
     width: 1480,
     height: 940,
     minWidth: 1080,
     minHeight: 680,
     backgroundColor: "#f4f5f2",
-    title: "AutoResearch",
+    title: launch.preview ? "AutoResearch · 候选预览" : "AutoResearch",
     webPreferences: {
       preload: join(here, "preload.cjs"),
       contextIsolation: true,
@@ -1709,10 +1776,69 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     app.setAppUserModelId("io.autoresearch.desktop");
     await initializeDataRoot();
+    if (!launch.preview) iterations = new AppIterations({
+      profile: app.getPath("userData"),
+      resolveAttachments: (ids) => chatAttachments.resolve(ids),
+      getDataRoot: () => dataRoot,
+      appRoot: !app.isPackaged && !isDev ? dirname(here) : undefined,
+      restart: async (phase) => {
+        if (phase === "check") {
+          const entries = await Promise.all([...experiments.entries.values()].map((entry) => entry.catch(() => null)));
+          if (activePaperAnalyses.size || activePaperAgents.size || paperAgentRuns.size || await environments.hasOperations()
+            || entries.some((entry) => [...(entry?.conversations.values() ?? [])].some((runtime) => runtime.turn)
+              || [...(entry?.jobs.values() ?? [])].some((job) => job.status === "running"))) throw new Error("请等当前研究任务完成后再更新并重启。");
+          return { executable: process.execPath, args: [app.getAppPath(), ...process.argv.slice(2)] };
+        } else {
+          if (phase === "relaunch") app.relaunch({ args: [app.getAppPath(), ...process.argv.slice(2)] });
+          setImmediate(() => app.quit());
+        }
+      },
+      agent: async (prompt, { runtime, access = "full", ...options }) => {
+        const agent = await llmService.agentRuntime();
+        const settings = await currentSettings();
+        const runtimeOptions = {
+          codexHome,
+          ...options,
+          timeoutMs: 45 * 60_000,
+          model: agent.model,
+          configOverrides: agent.configOverrides,
+          extraEnv: agent.env,
+          ...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {}),
+        };
+        if (runtime === "app-server") return runCodexAppServer(prompt, { ...runtimeOptions, access });
+        const full = access === "full";
+        return runCodexSdk(prompt, {
+          ...runtimeOptions,
+          sandboxMode: full ? "danger-full-access" : "workspace-write",
+          approvalPolicy: "never",
+          networkAccessEnabled: full,
+          webSearchMode: full ? "live" : "disabled",
+          maxAttempts: 1,
+        });
+      },
+    });
+    if (iterations) iterationDriftTimer = setInterval(() => { void iterations.checkDrift().catch(() => {}); }, 30_000);
+    const iterationService = () => {
+      if (!iterations) throw new Error("候选预览中无法发起迭代操作。");
+      return iterations;
+    };
+    ipcMain.handle("iteration:mode", () => ({ preview: launch.preview }));
+    ipcMain.handle("iteration:snapshot", () => iterationService().snapshot());
+    ipcMain.handle("iteration:choose", async () => {
+      const service = iterationService();
+      const selection = await dialog.showOpenDialog(mainWindow, { title: "选择 AutoResearch 源码仓库", properties: ["openDirectory"] });
+      if (!selection.canceled) await service.perform("bind", { path: selection.filePaths[0] });
+    });
+    ipcMain.handle("iteration:action", (_event, { action, input }) => iterationService().perform(action, input));
+    ipcMain.handle("iteration:diff", (_event, { id }) => iterationService().diff(id));
+    ipcMain.handle("iteration:patch", (_event, { id, file }) => iterationService().patch(id, file));
+    ipcMain.handle("iteration:artifact", (_event, { id, verifyId, kind, file }) => iterationService().artifact(id, verifyId, kind, file));
     registerHandlers();
     const workspace = await workspaceLoad();
-    await experiments.recover(workspace.projects.map((project) => project.id));
-    await migrateProjectDirectories(workspace.projects);
+    if (!launch.preview) {
+      await experiments.recover(workspace.projects.map((project) => project.id));
+      await migrateProjectDirectories(workspace.projects);
+    }
     createWindow();
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
@@ -1724,8 +1850,9 @@ app.on("before-quit", (event) => {
   if (stoppingSafely) return;
   event.preventDefault();
   stoppingSafely = true;
+  clearInterval(iterationDriftTimer);
   // 先持久化 agent 的中断状态；后台任务保持独立运行。
-  void experiments.stopAll()
+  void Promise.all([experiments.stopAll(), iterations?.shutdown()])
     .catch((error) => console.error("Unable to persist interrupted research work:", error))
     .finally(() => app.quit());
 });

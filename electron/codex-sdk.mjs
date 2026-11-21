@@ -100,7 +100,7 @@ function installedCliCandidates(env) {
   return [...candidates, ...extensionCandidates(env)];
 }
 
-function addAdjacentCodexPath(executable, env) {
+export function addAdjacentCodexPath(executable, env) {
   const binaryDirectory = dirname(executable);
   const vendorRoot = /[\\/]bin$/i.test(binaryDirectory) ? dirname(binaryDirectory) : binaryDirectory;
   const helperDirectory = join(vendorRoot, "codex-path");
@@ -114,20 +114,23 @@ function addAdjacentCodexPath(executable, env) {
   }
 }
 
-export function findCodexCli(env = process.env) {
+export function codexCliCandidates(env = process.env) {
+  const candidates = [];
   for (const name of ["AUTORESEARCH_CODEX_PATH", "OMNISCI_CODEX_PATH", "CODEX_CLI_PATH"]) {
     const candidate = normalizeExplicitPath(envValue(env, name));
-    if (candidate && isFile(candidate)) return candidate;
+    if (candidate) candidates.push(candidate);
   }
 
   const pathValue = envValue(env, "PATH") ?? "";
   for (const directory of pathValue.split(delimiter).filter(Boolean)) {
     const candidate = join(directory.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, (_, doubleQuoted, singleQuoted) => doubleQuoted ?? singleQuoted), CODEX_BINARY);
-    if (isFile(candidate)) return resolve(candidate);
+    candidates.push(resolve(candidate));
   }
 
-  return installedCliCandidates(env).map((candidate) => resolve(candidate)).find(isFile);
+  return [...new Set([...candidates, ...installedCliCandidates(env).map((candidate) => resolve(candidate))])].filter(isFile);
 }
+
+export function findCodexCli(env = process.env) { return codexCliCandidates(env)[0]; }
 
 function resolveCodexHome(env, codexHome) {
   const configured = codexHome || envValue(env, "CODEX_HOME") || join(homeDirectory(env), ".codex");
@@ -153,6 +156,7 @@ export async function runCodexSdk(prompt, {
   codexHome,
   workingDirectory,
   reasoningEffort,
+  imagePaths = [],
   sandboxMode = "read-only",
   approvalPolicy = "never",
   networkAccessEnabled = false,
@@ -249,7 +253,8 @@ export async function runCodexSdk(prompt, {
   const recoveries = Math.max(0, Math.min(5, Math.floor(maxRecoveryAttempts) || 0));
   let recoveryCount = 0;
   let knownThreadId = threadId || thread?.id;
-  let attemptPrompt = prompt;
+  const initialInput = imagePaths.length ? [{ type: "text", text: prompt }, ...imagePaths.map((path) => ({ type: "local_image", path }))] : prompt;
+  let attemptPrompt = initialInput;
   let hasAcceptedTurn = false;
   const deadline = Date.now() + timeoutMs;
   let writerConflictRetries = 0;
@@ -310,7 +315,7 @@ export async function runCodexSdk(prompt, {
         thread = null;
         knownThreadId = undefined;
         hasAcceptedTurn = false;
-        attemptPrompt = prompt;
+        attemptPrompt = initialInput;
         await onThread?.(null);
         if (writerConflictRetries < 1) {
           writerConflictRetries += 1;
@@ -337,7 +342,7 @@ export async function runCodexSdk(prompt, {
         if (knownThreadId) {
           thread = client.resumeThread(knownThreadId, threadOptions);
           // Do not resend the original tool-using task after it has started.
-          attemptPrompt = hasAcceptedTurn ? CODEX_CONTINUATION_PROMPT : prompt;
+          attemptPrompt = hasAcceptedTurn ? CODEX_CONTINUATION_PROMPT : initialInput;
         } else thread = client.startThread(threadOptions);
         await onRetry?.({ attempt: recoveryCount, maxAttempts: recoveries, delayMs: 0, error, recovery: true, phase: "resuming" });
         attempt -= 1;

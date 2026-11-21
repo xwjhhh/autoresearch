@@ -1,0 +1,95 @@
+/* 模型切换器（顶栏）与模型服务商设置 */
+
+/* ---------- 顶栏切换器 */
+.llm-switch-wrap { position: relative; }
+.llm-switch { max-width: 300px; height: 32px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; color: #33403d; border: 1px solid #dfe5e0; border-radius: 999px; background: #fff; cursor: pointer; font-size: 12px; }
+.llm-switch:hover, .llm-switch.is-open { border-color: #b8cdc1; background: #f7faf8; }
+.llm-switch > svg { flex: 0 0 auto; color: #7d8a86; }
+.llm-switch-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+
+.llm-pop { position: absolute; z-index: 9; top: calc(100% + 6px); right: 0; width: 360px; max-height: min(70vh, 560px); display: flex; flex-direction: column; padding: 8px; border: 1px solid #dfe5e0; border-radius: 12px; background: #fff; box-shadow: 0 14px 40px rgba(25, 40, 35, .16), 0 1px 3px rgba(25, 40, 35, .06); }
+.llm-pop-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 9px; background: #f1f4f1; }
+.llm-pop-tabs button { min-width: 0; display: flex; align-items: flex-start; gap: 7px; padding: 7px 8px; color: #66736f; border: 0; border-radius: 7px; background: transparent; cursor: pointer; text-align: left; }
+.llm-pop-tabs button > svg { flex: 0 0 auto; margin-top: 2px; }
+.llm-pop-tabs button > span { min-width: 0; display: grid; gap: 1px; }
+.llm-pop-tabs strong { font-size: 12px; font-weight: 600; }
+.llm-pop-tabs small { overflow: hidden; color: #8e9995; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.llm-pop-tabs button.is-active { color: #1f2a28; background: #fff; box-shadow: 0 1px 2px rgba(30, 50, 38, .1); }
+.llm-pop-hint { margin: 8px 4px 6px; color: #84918d; font-size: 11px; line-height: 1.5; }
+.llm-pop-warn { margin: 0 4px 6px; padding: 6px 8px; color: #7a4d12; border-radius: 7px; background: #fbf4e7; font-size: 11px; line-height: 1.5; }
+.llm-pop-search { height: 30px; margin: 0 0 6px; padding: 0 9px; color: #2f3a37; border: 1px solid #e1e6e1; border-radius: 7px; outline: 0; background: #fafbf9; font-size: 12px; }
+.llm-pop-search:focus { border-color: #a9c6b6; background: #fff; }
+.llm-pop-list { min-height: 0; overflow-y: auto; padding: 0 2px; scrollbar-width: thin; }
+.llm-pop-list section + section { margin-top: 6px; }
+.llm-pop-list h4 { display: flex; align-items: center; gap: 6px; margin: 6px 6px 3px; color: #8a9692; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.llm-pop-list h4 small { padding: 0 5px; color: #8a5a1c; border-radius: 999px; background: #f8eedc; font-size: 9px; font-weight: 500; }
+.llm-option { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px; color: #2f3a37; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-size: 12px; text-align: left; }
+.llm-option:hover:not(:disabled) { background: #f2f5f2; }
+.llm-option.is-current { color: #1c5f50; background: #eaf3ee; font-weight: 600; }
+.llm-option > svg { flex: 0 0 auto; color: var(--teal); }
+.llm-option-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.llm-pop-empty { margin: 2px 8px 6px; color: #98a29e; font-size: 11px; line-height: 1.5; }
+.llm-pop-empty button { padding: 0; color: var(--teal-dark); border: 0; background: transparent; cursor: pointer; font-size: 11px; text-decoration: underline; }
+.llm-pop-manage { display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; margin-top: 6px; color: #4f5c58; border: 0; border-top: 1px solid #eef1ed; background: transparent; cursor: pointer; font-size: 12px; }
+.llm-pop-manage:hover { color: var(--teal-dark); }
+
+/* ---------- 设置里的服务商列表 */
+.modal.modal--settings { width: min(100%, 820px); }
+/* 设置弹窗外层是 .form-stack，它给 label 和 input 的通用样式不适合复选框。 */
+.form-stack .llm-check { display: inline-flex; grid-template-columns: none; align-items: center; gap: 6px; color: #4f5c58; font-size: 12px; font-weight: 400; }
+.form-stack .llm-check input { width: 14px; height: 14px; min-width: 0; padding: 0; margin: 0; border: 0; box-shadow: none; flex: 0 0 auto; }
+.form-stack .llm-fetched-list .llm-check { display: flex; font: 11px var(--mono); }
+.form-stack .settings-toggle { display: flex; }
+.llm-settings { gap: 10px; }
+.llm-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.llm-provider { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e6eae5; border-radius: 10px; background: #fff; }
+.llm-provider--codex { background: #fafbf9; }
+.llm-provider-main { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.llm-provider-main strong { color: #26312e; font-size: 12px; font-weight: 600; }
+.llm-provider-url { overflow: hidden; color: #8a9692; font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.llm-provider-status { display: flex; align-items: center; gap: 6px; color: #8e6e4d; font-size: 11px; }
+.llm-provider-status.is-ready { color: #48745c; }
+.llm-provider-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.llm-tag { padding: 0 6px; color: #5f6c68; border-radius: 999px; background: #eef1ee; font-size: 10px; line-height: 17px; }
+.llm-tag--agent { color: #285e86; background: #e6eff6; }
+.llm-tag--warn { color: #8a5a1c; background: #f8eedc; }
+.llm-provider-actions { display: flex; gap: 2px; }
+.llm-confirm { display: flex; align-items: center; gap: 6px; color: #94403a; font-size: 11px; white-space: nowrap; }
+.llm-danger { color: #fff; border-color: #b4534a; background: #b4534a; }
+.llm-danger:hover { border-color: #973f37; background: #973f37; }
+.llm-error { display: flex; align-items: flex-start; gap: 6px; margin: 0; padding: 7px 10px; color: #94403a; border-radius: 8px; background: #faefed; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+.llm-error > svg { flex: 0 0 auto; margin-top: 2px; }
+
+/* ---------- 编辑器 */
+.llm-editor { display: grid; gap: 10px; padding: 12px 14px 14px; border: 1px solid #c9dbd0; border-radius: 12px; background: #fbfdfb; box-shadow: 0 0 0 3px rgba(35, 121, 99, .06); }
+.llm-editor-head { display: flex; align-items: center; justify-content: space-between; }
+.llm-editor-head strong { color: #26312e; font-size: 13px; }
+.llm-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.llm-presets button { height: 28px; padding: 0 11px; color: #4f5c58; border: 1px solid #e0e5e0; border-radius: 999px; background: #fff; cursor: pointer; font-size: 12px; }
+.llm-presets button:hover { border-color: #b8cdc1; }
+.llm-presets button.is-active { color: #fff; border-color: #2c3a37; background: #2c3a37; }
+.llm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 10px; }
+.llm-grid label, .llm-field { display: grid; gap: 5px; color: #53615b; font-size: 11px; font-weight: 550; }
+.llm-editor input:not([type="checkbox"]), .llm-test select { width: 100%; min-width: 0; height: 32px; padding: 0 9px; color: #2f3a37; border: 1px solid #dfe5df; border-radius: 7px; outline: 0; background: #fff; font-size: 12px; font-weight: 400; }
+.llm-editor input:not([type="checkbox"]):focus, .llm-test select:focus { border-color: #8bb7a1; box-shadow: 0 0 0 2px rgba(35, 121, 99, .09); }
+.llm-check { display: inline-flex; align-items: center; gap: 6px; color: #4f5c58; font-size: 12px; cursor: pointer; }
+.llm-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--teal); }
+.llm-check small { color: #8e9995; font-size: 11px; }
+.llm-protocols { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; color: #53615b; font-size: 11px; font-weight: 550; }
+.llm-models { display: grid; gap: 8px; padding: 10px; border: 1px solid #e8ebe6; border-radius: 10px; background: #fff; }
+.llm-models-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #53615b; font-size: 11px; font-weight: 550; }
+.llm-models-head small { color: #8e9995; font-weight: 400; }
+.llm-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.llm-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 4px 2px 9px; color: #2f3a37; border-radius: 999px; background: #eef3ef; font: 11px var(--mono); }
+.llm-chip button { width: 18px; height: 18px; display: grid; place-items: center; padding: 0; color: #7d8a86; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.llm-chip button:hover { color: #94403a; background: #f7e9e7; }
+.llm-add-model { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.llm-fetched { display: grid; gap: 6px; padding-top: 8px; border-top: 1px dashed #e3e8e3; }
+.llm-fetched-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; }
+.llm-fetched-head .text-button { font-size: 11px; }
+.llm-fetched-list { max-height: 200px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 12px; overflow-y: auto; padding: 2px; }
+.llm-fetched-list .llm-check { min-width: 0; font: 11px var(--mono); overflow-wrap: anywhere; }
+.llm-test { display: grid; grid-template-columns: minmax(160px, 260px) auto minmax(0, 1fr); align-items: center; gap: 8px; }
+.llm-test-ok { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: #2f6b52; font-size: 11px; overflow-wrap: anywhere; }
+.llm-use { display: flex; flex-wrap: wrap; gap: 6px; }
+.llm-editor-actions { display: flex; justify-content: flex-end; gap: 7px; padding-top: 4px; border-top: 1px solid #eef1ed; }

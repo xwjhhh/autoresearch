@@ -803,8 +803,8 @@ export class ExperimentLab {
     });
   }
 
-  async send(projectId, id, text, conversationId = null) {
-    const message = str(text, 8000);
+  async send(projectId, id, text, conversationId = null, attachments = []) {
+    const message = str(text, 8000) || (attachments.length ? "请查看我附上的资料。" : "");
     if (!message) throw new Error("消息不能为空。");
     const entry = await this.entry(projectId, id);
     return this.serial(entry, async () => {
@@ -818,8 +818,9 @@ export class ExperimentLab {
       conversation.autoWakeStalls = 0;
       runtime.suppressWake = false;
       runtime.wakeLimitNoted = false;
-      await this.append(entry, { type: "user", conversationId: conversation.id, text: message });
-      this.startTurn(entry, conversation, userTurnPrompt({ text: message, notices, newThread: !conversation.threadId && conversation.turns > 0, record: this.recordFile(entry) }), notices);
+      await this.append(entry, { type: "user", conversationId: conversation.id, text: message, ...(attachments.length ? { attachments: attachmentMetadata(attachments) } : {}) });
+      const prompt = userTurnPrompt({ text: message, notices, newThread: !conversation.threadId && conversation.turns > 0, record: this.recordFile(entry) });
+      this.startTurn(entry, conversation, prompt + localAttachmentPrompt(attachments), notices, { imagePaths: attachments.filter((file) => file.mediaType).map((file) => file.path) });
       return clone(experiment);
     });
   }
@@ -929,7 +930,7 @@ export class ExperimentLab {
     });
   }
 
-  startTurn(entry, conversation, prompt, notices = [], { forceNewThread = false } = {}) {
+  startTurn(entry, conversation, prompt, notices = [], { forceNewThread = false, imagePaths = [] } = {}) {
     if (this.stopping || entry.closed) throw new Error("实验服务已停止，请重新打开实验。");
     const { experiment } = entry;
     const runtime = this.conversationRuntime(entry, conversation);
@@ -955,6 +956,7 @@ export class ExperimentLab {
         await this.serial(entry, () => this.launchPendingJobs(entry));
         const result = await this.runAgent(`${environmentPrompt(environmentLease?.environment ?? null)}\n\n${executionPolicy(experiment.settings, { platform: this.platform })}\n\n${prompt}`, {
           workingDirectory: entry.workspace,
+          imagePaths,
           threadId: forceNewThread ? null : conversation.threadId,
           conversationId: conversation.id,
           shellEnvironment: { AUTORESEARCH_CONVERSATION_ID: conversation.id },
@@ -1702,3 +1704,4 @@ export class ExperimentLab {
     }
   }
 }
+import { attachmentMetadata, localAttachmentPrompt } from "../chat-attachments.mjs";

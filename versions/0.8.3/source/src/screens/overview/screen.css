@@ -1,0 +1,75 @@
+/* 课题概览：没有右栏；顶部是“需要你处理”，下面是文献、实验、运行环境三张状态卡。 */
+.ov-page { width: min(100%, 1100px); display: flex; flex-direction: column; gap: 16px; margin: 0 auto; padding: 24px 28px 36px; color: var(--ink); font-size: 12px; line-height: 1.6; }
+.ov-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.ov-head-copy { min-width: 0; max-width: 780px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.ov-head h1 { margin: 0; color: #202b2d; font-size: 20px; font-weight: 600; line-height: 1.4; }
+.ov-head p { margin: 0; color: #3d4a48; font-size: 12px; line-height: 1.75; white-space: pre-wrap; }
+.ov-head p.is-clamped { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.ov-muted { color: #5f6d6b; font-size: 11px; }
+.ov-mono { font-family: var(--mono); }
+.ov-link { padding: 0; color: #1c5f50; border: 0; background: transparent; cursor: pointer; font-size: 12px; font-weight: 550; }
+.ov-link:hover { text-decoration: underline; }
+
+.ov-card { min-width: 0; border: 1px solid #e3e8e4; border-radius: 8px; background: #fff; }
+.ov-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 14px; border-bottom: 1px solid #edf0ed; }
+.ov-card-head h2 { display: flex; align-items: center; gap: 7px; margin: 0; color: #26332f; font-size: 13px; font-weight: 600; }
+
+.ov-pill { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap; }
+.ov-pill--green { color: #2f6b52; background: #e6f2ea; }
+.ov-pill--amber { color: #7a4d12; background: #f8eedc; }
+.ov-pill--red { color: #94403a; background: #f7e9e7; }
+.ov-pill--blue { color: #285e86; background: #e6eff6; }
+.ov-pill--gray { color: #4c5a5e; background: #edf1f2; }
+
+.ov-need { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-top: 1px solid #f0f2ef; }
+.ov-card-head + .ov-need { border-top: 0; }
+.ov-need-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 6px; }
+.ov-need-icon--amber { color: #7a4d12; background: #f8eedc; }
+.ov-need-icon--blue { color: #285e86; background: #e6eff6; }
+.ov-need-icon--red { color: #94403a; background: #f7e9e7; }
+.ov-need-icon--gray { color: #3d4b48; background: #eef1ee; }
+.ov-need-icon--green { color: #2f6b52; background: #e6f2ea; }
+.ov-need-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ov-need-copy strong { color: #26332f; font-size: 12px; font-weight: 600; }
+.ov-need-copy span { overflow: hidden; color: #5f6d6b; text-overflow: ellipsis; white-space: nowrap; }
+.ov-need--calm .ov-need-copy span { white-space: normal; }
+.ov-more { margin: 0; padding: 8px 14px 10px; color: #5f6d6b; border-top: 1px solid #f0f2ef; font-size: 11px; }
+
+.ov-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ov-status-card { display: flex; flex-direction: column; gap: 9px; padding: 13px 14px; }
+.ov-status-head { display: flex; align-items: center; justify-content: space-between; }
+.ov-status-head strong { font-size: 13px; font-weight: 600; }
+.ov-figure { display: flex; align-items: baseline; gap: 7px; }
+.ov-figure b { font-size: 15px; font-weight: 600; }
+.ov-figure span { color: #5f6d6b; }
+.ov-bar { height: 7px; display: flex; gap: 2px; overflow: hidden; border-radius: 4px; background: #eef1ee; }
+.ov-bar span, .ov-legend i { background: #cfd7d3; }
+.ov-bar .is-done, .ov-legend .is-done { background: #3f8f6d; }
+.ov-bar .is-running, .ov-legend .is-running { background: #6aa3c7; }
+.ov-bar .is-attention, .ov-legend .is-attention { background: #d8a85f; }
+.ov-legend { display: flex; flex-wrap: wrap; gap: 3px 12px; color: #3d4a48; font-size: 11px; }
+.ov-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.ov-legend i { width: 8px; height: 8px; border-radius: 2px; }
+.ov-status-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ov-list { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.ov-list button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 6px; margin: 0 -6px; color: inherit; border: 0; border-radius: 5px; background: transparent; cursor: pointer; font: inherit; text-align: left; }
+.ov-list button:hover { background: #f4f7f4; }
+.ov-list button > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-env { display: flex; flex-direction: column; gap: 1px; }
+.ov-env b { font-size: 14px; font-weight: 500; }
+.ov-env span { color: #5f6d6b; font-size: 11px; }
+.ov-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.ov-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ov-row { width: 100%; display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; color: inherit; border: 0; border-top: 1px solid #f0f2ef; background: transparent; cursor: pointer; font: inherit; text-align: left; }
+.ov-card-head + .ov-row { border-top: 0; }
+.ov-row:hover { background: #f8faf8; }
+.ov-row strong { font-weight: 600; }
+.ov-row-title { display: flex; align-items: center; gap: 8px; }
+.ov-row-preview { overflow: hidden; color: #5f6d6b; text-overflow: ellipsis; white-space: nowrap; }
+.ov-empty { margin: 0; padding: 14px; color: #5f6d6b; }
+
+@media (max-width: 1260px) {
+  .ov-page { padding-right: 22px; padding-left: 22px; }
+  .ov-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
