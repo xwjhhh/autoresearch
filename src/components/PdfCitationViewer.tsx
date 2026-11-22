@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ChevronLeft, ChevronRight, CircleAlert, LoaderCircle, X } from "lucide-react";
+import { ArrowDown, ChevronLeft, ChevronRight, CircleAlert, LoaderCircle, X, ZoomIn, ZoomOut } from "lucide-react";
 import { GlobalWorkerOptions, getDocument, TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { Paper } from "../types";
@@ -11,6 +11,7 @@ const normalized = (value: string) => value.normalize("NFKC").toLocaleLowerCase(
 export default function PdfCitationViewer({ projectId, paper, page: initialPage, quote, onClose, embedded = false, onSelectText }: { projectId: string; paper: Paper; page: number; quote?: string; onClose: () => void; embedded?: boolean; onSelectText?: (quote: string, page: number) => void }) {
   const [documentProxy, setDocumentProxy] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(initialPage);
+  const [zoomPercent, setZoomPercent] = useState(100);
   const [pageCount, setPageCount] = useState(paper.pageCount || 0);
   const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
   const [matchInPage, setMatchInPage] = useState(false);
@@ -51,8 +52,8 @@ export default function PdfCitationViewer({ projectId, paper, page: initialPage,
       ]);
       if (disposed || !canvasRef.current) return;
       const viewport = pageProxy.getViewport({ scale: 1 });
-      const scale = Math.min(1.45, Math.max(0.6, (shellWidth - 34) / viewport.width));
-      const scaled = pageProxy.getViewport({ scale });
+      const fitScale = Math.min(1.45, Math.max(0.6, (shellWidth - 34) / viewport.width));
+      const scaled = pageProxy.getViewport({ scale: fitScale * zoomPercent / 100 });
       const canvas = canvasRef.current;
       const context = canvas.getContext("2d", { alpha: false });
       if (!context) throw new Error("无法创建 PDF 页面画布。");
@@ -86,16 +87,18 @@ export default function PdfCitationViewer({ projectId, paper, page: initialPage,
       }
     }).catch((reason: unknown) => { if (!disposed) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { if (!disposed) setBusy(false); });
     return () => { disposed = true; renderTask?.cancel(); textLayer?.cancel(); };
-  }, [documentProxy, page, quote]);
+  }, [documentProxy, page, quote, zoomPercent]);
 
   const changePage = (next: number) => setPage(Math.max(1, Math.min(pageCount, next)));
 
+  const zoomOut = () => setZoomPercent((current) => Math.max(50, current - 25));
+  const zoomIn = () => setZoomPercent((current) => Math.min(200, current + 25));
   const viewer = <section className={`pdf-viewer ${embedded ? "pdf-viewer--embedded" : ""}`} role={embedded ? "region" : "dialog"} aria-modal={embedded ? undefined : true} aria-label={`阅读 ${paper.title}`}>
       <header className="pdf-viewer-header"><div><span className="eyebrow">SOURCE DOCUMENT</span><h2>{paper.title}</h2></div><button className="pdf-viewer-close" type="button" aria-label="关闭 PDF 阅读器" onClick={onClose}><X size={17} /></button></header>
-      <div className="pdf-viewer-toolbar"><button type="button" className="pdf-toolbar-button" onClick={() => changePage(page - 1)} disabled={page <= 1}><ChevronLeft size={15} />上一页</button><label>页码<input type="number" min={1} max={pageCount || undefined} value={page} onChange={(event) => changePage(Number(event.target.value) || 1)} /><span>/ {pageCount || "--"}</span></label><button type="button" className="pdf-toolbar-button" onClick={() => changePage(page + 1)} disabled={page >= pageCount}>下一页<ChevronRight size={15} /></button>{quote && <span className={`pdf-match-status ${matchInPage ? "is-found" : ""}`}>{matchInPage ? <ArrowDown size={13} /> : <CircleAlert size={13} />}{matchInPage ? "摘录已在页面上标出" : "页面未找到摘录，原文保留如下"}</span>}</div>
+      <div className="pdf-viewer-toolbar"><button type="button" className="pdf-toolbar-button" onClick={() => changePage(page - 1)} disabled={page <= 1}><ChevronLeft size={15} />上一页</button><label>页码<input type="number" min={1} max={pageCount || undefined} value={page} onChange={(event) => changePage(Number(event.target.value) || 1)} /><span>/ {pageCount || "--"}</span></label><button type="button" className="pdf-toolbar-button" onClick={() => changePage(page + 1)} disabled={page >= pageCount}>下一页<ChevronRight size={15} /></button><div className="pdf-zoom-controls" role="group" aria-label="页面缩放"><button type="button" className="pdf-toolbar-button" aria-label="缩小" title="缩小" onClick={zoomOut} disabled={zoomPercent <= 50}><ZoomOut size={15} /></button><span className="pdf-zoom-level" aria-live="polite">{zoomPercent}%</span><button type="button" className="pdf-toolbar-button" aria-label="放大" title="放大" onClick={zoomIn} disabled={zoomPercent >= 200}><ZoomIn size={15} /></button></div>{quote && <span className={`pdf-match-status ${matchInPage ? "is-found" : ""}`}>{matchInPage ? <ArrowDown size={13} /> : <CircleAlert size={13} />}{matchInPage ? "摘录已在页面上标出" : "页面未找到摘录，原文保留如下"}</span>}</div>
       {quote && <div className="pdf-source-excerpt"><strong>引用原文</strong><p>{quote}</p></div>}
       <div className="pdf-viewer-body">
-        <div className="pdf-page-shell" ref={pageShellRef}>{busy && <div className="pdf-loading"><LoaderCircle className="spin" size={18} />正在加载页面</div>}{error && <div className="pdf-error"><CircleAlert size={17} />{error}</div>}<div className="pdf-canvas-wrap" style={pageSize ? { width: `${pageSize.width}px`, height: `${pageSize.height}px` } : undefined}><canvas ref={canvasRef} aria-label={`${paper.title} 第 ${page} 页`} /><div className="pdf-text-layer" ref={textLayerRef} aria-label="PDF 页面文字" onMouseUp={() => { const selection = window.getSelection()?.toString().trim(); if (selection) onSelectText?.(selection, page); }} /></div></div>
+        <div className={`pdf-page-shell${zoomPercent > 100 ? " is-zoomed" : ""}`} ref={pageShellRef}>{busy && <div className="pdf-loading"><LoaderCircle className="spin" size={18} />正在加载页面</div>}{error && <div className="pdf-error"><CircleAlert size={17} />{error}</div>}<div className="pdf-canvas-wrap" style={pageSize ? { width: `${pageSize.width}px`, height: `${pageSize.height}px` } : undefined}><canvas ref={canvasRef} aria-label={`${paper.title} 第 ${page} 页`} /><div className="pdf-text-layer" ref={textLayerRef} aria-label="PDF 页面文字" onMouseUp={() => { const selection = window.getSelection()?.toString().trim(); if (selection) onSelectText?.(selection, page); }} /></div></div>
       </div>
   </section>;
   return embedded ? viewer : <div className="pdf-viewer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>{viewer}</div>;

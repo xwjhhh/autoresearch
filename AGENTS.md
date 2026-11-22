@@ -79,3 +79,4 @@
 - [初始] 场景测试看到的还是旧界面 → 场景测试加载 `dist/`，改 `src/` 后没重新构建 → 用 `iteration-check.mjs`（默认会构建），或先 `npm run build`。
 - [初始] 验收测试需要示例数据里没有的内容 → `scripts/iteration-fixture.mjs` 对每个任务都是冻结的，改不了 → 在验收测试里自己准备：用 `launchFixture` 的 `settings`、`iterationState` 参数；或先在 `info.outputPath(...)` 目录里写好文件，再 `launchFixture(info, { data: 该目录 })`。示例数据用 `wx` 写入，不会覆盖你事先写好的文件。
 - [初始] 新写的单元测试没有被运行 → 放在了 `electron/` 的子目录 → 放到 `electron/` 顶层，或放进本任务的验收目录。
+- [#2] 隐藏窗口通过 BrowserWindow.capturePage 截到旧帧 → 渲染器已更新但隐藏窗口截图仍显示前一帧 → 验证动态界面时等待状态稳定，并用 Playwright 的 page.screenshot 核对当前画面。
