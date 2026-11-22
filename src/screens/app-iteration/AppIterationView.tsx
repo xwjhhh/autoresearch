@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { ArrowUpRight, FolderGit2, GitBranch, GitPullRequest, LoaderCircle, Plus, RefreshCw, Settings2 } from "lucide-react";
+import { useEffect, useId, useState, type FormEvent } from "react";
+import { ArrowUpRight, ChevronRight, FolderGit2, GitBranch, GitPullRequest, LoaderCircle, Plus, RefreshCw, Settings2 } from "lucide-react";
 import { ChatAttachments, ChatComposer } from "../../components/ChatComposer";
 import type { ChatAttachment } from "../../types";
 import type { IterationAction, IterationSnapshot, IterationStatus, IterationTask } from "./model";
@@ -99,6 +99,57 @@ function Trial({ task, disabled, onSubmit }: { task: IterationTask; disabled: bo
     <textarea aria-label="试用备注" rows={2} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="其他发现（可选）" />
     <div className="iter-row"><button type="button" className="iter-button iter-primary" disabled={disabled || !opened || !complete} onClick={() => onSubmit(answers.map(({ result, note }) => ({ result: result ?? "fail", note })), note)}>提交试用结果</button></div>
   </section>;
+}
+
+type ThreadEntry = {
+  kind: "user" | "agent" | "verify" | "operation";
+  at: string;
+  text: string;
+  attachments?: ChatAttachment[];
+};
+
+function OperationLog({ entries }: { entries: ThreadEntry[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const logId = useId();
+
+  return <section className="iter-operations">
+    <button className="iter-operations-toggle" type="button" aria-expanded={expanded} aria-controls={logId} onClick={() => setExpanded(!expanded)}>
+      <ChevronRight size={14} aria-hidden="true" /><strong>Agent 操作</strong><span className="iter-meta">{entries.length} 条</span>
+    </button>
+    <div id={logId} className="iter-operations-log" role="region" aria-label="Agent 操作日志" hidden={!expanded} tabIndex={0}>
+      {expanded && entries.map((entry, index) => <div className="iter-operation-entry" key={`${entry.at}-${index}`}>
+        <time dateTime={entry.at}>{new Date(entry.at).toLocaleString("zh-CN")}</time>
+        <pre>{entry.text}</pre>
+      </div>)}
+    </div>
+  </section>;
+}
+
+const threadLabels = { user: "你", agent: "Agent", verify: "验证进度" };
+
+function IterationMessages({ task }: { task: IterationTask }) {
+  const entries = [
+    ...task.messages.map<ThreadEntry>((entry) => ({ ...entry, kind: entry.role })),
+    ...(task.events ?? []).map<ThreadEntry>((entry) => ({ ...entry, kind: entry.kind === "agent" ? "operation" : "verify" })),
+  ].sort((left, right) => left.at.localeCompare(right.at));
+  const groups: ThreadEntry[][] = [];
+  for (const entry of entries) {
+    const previous = groups.at(-1);
+    if (entry.kind === "operation" && previous?.[0].kind === "operation") previous.push(entry);
+    else groups.push([entry]);
+  }
+
+  return groups.map((group, index) => {
+    const [entry] = group;
+    if (entry.kind === "operation") {
+      const previous = groups[index - 1]?.[0];
+      return <OperationLog key={`operations-${previous?.at ?? "start"}-${index}`} entries={group} />;
+    }
+    return <article key={`${entry.at}-${index}`} className={entry.kind === "user" ? "" : "iter-agent"}>
+      <strong>{threadLabels[entry.kind]}</strong><time dateTime={entry.at}>{new Date(entry.at).toLocaleString("zh-CN")}</time>
+      <ChatAttachments files={entry.attachments} /><p>{entry.text}</p>
+    </article>;
+  });
 }
 
 export function AppIterationView() {
@@ -252,7 +303,7 @@ export function AppIterationView() {
           {tab === "验证" && <Verification key={task.id} task={task} />}
           {tab === "对话" && <div className="iter-pane iter-thread">
             <article><strong>需求</strong><ChatAttachments files={task.attachments} /><p>{task.description}</p>{task.criteria && <><strong>验收条件</strong><p>{task.criteria}</p></>}{task.freeze && <p className="iter-meta">验收已冻结 <code title={task.freeze.hash}>{short(task.freeze.hash)}</code></p>}</article>
-            {[...task.messages.map((entry) => ({ ...entry, kind: entry.role === "agent" ? "Agent" : "你" })), ...(task.events ?? []).map((entry) => ({ ...entry, attachments: undefined, kind: entry.kind === "verify" ? "验证进度" : "Agent 操作" }))].sort((left, right) => left.at.localeCompare(right.at)).map((entry, index) => <article key={`${entry.at}-${index}`} className={entry.kind === "你" ? "" : "iter-agent"}><strong>{entry.kind}</strong><time>{new Date(entry.at).toLocaleString("zh-CN")}</time><ChatAttachments files={entry.attachments} /><p>{entry.text}</p></article>)}
+            <IterationMessages key={task.id} task={task} />
             {stream && <article className="iter-agent"><strong>Agent · 正在输出</strong><p>{stream}</p></article>}
           </div>}
           {tab === "预览" && <div className="iter-pane iter-preview">
